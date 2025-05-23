@@ -197,7 +197,7 @@ if __name__ == '__main__':
     # Test singkat
     dataset = DUODataset(
         root_dir='../data',
-        annotation_file='../data/train.json',
+        annotation_file='../kaggle/working/YOLO_Underwater/data/train.json',
         image_folder='image_folder',
         split='train',
         use_augmentation=False)
