@@ -13,7 +13,7 @@ class Opt():
 		self.parser.add_argument("--print_options", default=True, help="print options or not")
 		# project root, dataset, checkpoint resume and pretrained model path
 		self.parser.add_argument("--project_root", type=str, default=".", help="root directory path of project")
-		self.parser.add_argument("--dataset_path", type=str, default="data/",
+		self.parser.add_argument("--dataset_path", type=str, default="/kaggle/working/YOLO_Underwater/data",
 								 help="directory path of dataset")
 		self.parser.add_argument("--cache", action="store_true", help="if true, cache the dataset", default=False)
 		self.parser.add_argument("--pretrain", action="store_true", help="if true, do not load optimizer", default=False)
