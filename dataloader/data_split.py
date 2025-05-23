@@ -1,19 +1,26 @@
 import os
 import numpy as np
 
-names = os.listdir('../data/image')
+def list_files_in_folder(folder):
+    files = os.listdir(folder)
+    files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    return files
 
-np.random.seed(1234)
-np.random.shuffle(names)
+base_dir = '../data/image_folder'
 
-train_set = names[:3600]
-val_set = names[3600:4000]
-test_set = names[4000:]
+train_files = list_files_in_folder(os.path.join(base_dir, 'train'))
+val_files = list_files_in_folder(os.path.join(base_dir, 'val'))
+test_files = list_files_in_folder(os.path.join(base_dir, 'test'))
 
-save_names = ['train', 'val', 'test']
-names_list = [train_set, val_set, test_set]
+# Simpan ke masing-masing file txt (tanpa ekstensi)
+with open('../data/train.txt', 'w') as f:
+    for name in train_files:
+        f.write(name.rsplit('.', 1)[0] + '\n')
 
-for index, save_name in enumerate(save_names):
-	with open('../data/{}.txt'.format(save_name), 'w') as f:
-		for name in names_list[index]:
-			f.write(name[:-4] + '\n')
+with open('../data/val.txt', 'w') as f:
+    for name in val_files:
+        f.write(name.rsplit('.', 1)[0] + '\n')
+
+with open('../data/test.txt', 'w') as f:
+    for name in test_files:
+        f.write(name.rsplit('.', 1)[0] + '\n')

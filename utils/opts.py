@@ -18,7 +18,7 @@ class Opt():
 		self.parser.add_argument("--cache", action="store_true", help="if true, cache the dataset", default=False)
 		self.parser.add_argument("--pretrain", action="store_true", help="if true, do not load optimizer", default=False)
 
-		self.parser.add_argument("--classname_path", type=str, default="data/urpc.names",
+		self.parser.add_argument("--classname_path", type=str, default="data/duo.names",
 								 help="file path of classnames for visualizer")
 		self.parser.add_argument("--checkpoint_path", type=str, default="checkpoints",
 								 help="directory path of checkpoints")
@@ -26,7 +26,7 @@ class Opt():
 
 		# common options that are used in both train and test
 		self.parser.add_argument("--manual_seed", type=int, default=22, help="manual_seed of pytorch")
-		self.parser.add_argument("--gpu", action="store_true", help="if true, cuda is used", default=False)
+		self.parser.add_argument("--gpu", action="store_true", help="if true, cuda is used", default=True)
 		self.parser.add_argument("--num_threads", type=int, default=4,
 								 help="# of cpu threads to use for batch generation")
 		self.parser.add_argument("--checkpoint_interval", type=int, default=5,
@@ -34,11 +34,11 @@ class Opt():
 		self.parser.add_argument("--val_interval", type=int, default=1, help="evaluation every # epochs")
 
 		self.parser.add_argument("--model", type=str, default="YOLO-Underwater", help="choose which model to use")
-		self.parser.add_argument("--image_size", type=int, default=512, help="size of image")
+		self.parser.add_argument("--image_size", type=int, default=320, help="size of image")
 		self.parser.add_argument("--num_classes", type=int, default=4, help="# of classes of the dataset")
 		self.parser.add_argument('--num_epochs', type=int, default=200, help='# of epochs')
 		self.parser.add_argument('--begin_epoch', type=int, default=0, help='# of epochs')
-		self.parser.add_argument("--batch_size", type=int, default=1, help="batch size")
+		self.parser.add_argument("--batch_size", type=int, default=8, help="batch size")
 		self.parser.add_argument("--version", type=int, default=0, help="YOLO Underwater version")
 		self.parser.add_argument("--preprocessing", action="store_true", help="if true, use preprocessing module", default=False)
 

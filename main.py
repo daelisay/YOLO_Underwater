@@ -3,7 +3,7 @@ import time
 import torch
 import torch.nn as nn
 
-from dataloader.URPCDataset import URPCDataset, collate_fn
+from dataloader.DUODataset import DUODataset, collate_fn
 from torch.utils.data import DataLoader
 from models.select_model import select_model
 
@@ -16,27 +16,46 @@ from val import val
 from test import test
 
 if __name__ == "__main__":
-
     opt = Opt().parse()
+    opt.device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")  # <-- DI SINI
+
+    opt.num_classes = 5
+    
     seed_torch(opt.manual_seed)
 
     ########################################
-    #              Transforms              #
+    #              Dataset & Loader        #
     ########################################
     if not opt.no_train:
-        train_dataset = URPCDataset(
-            opt.dataset_path, image_size=opt.image_size, split='train',
-            use_augmentation=True, box_type='yolo', cache=opt.cache, preprocessing=opt.preprocessing)
+        train_dataset = DUODataset(
+            root_dir=opt.dataset_path,
+            annotation_file=os.path.join(opt.dataset_path, "train.json"),
+            image_folder='image_folder',  # pastikan ini sama persis dengan nama folder di filesystem
+            split='train',
+            image_size=opt.image_size,
+            use_augmentation=True,
+            box_type='yolo',
+            cache=opt.cache,
+            preprocessing=opt.preprocessing)
         train_loader = DataLoader(
-            train_dataset, batch_size=opt.batch_size, shuffle=True, collate_fn=collate_fn)
+            train_dataset, batch_size=opt.batch_size, shuffle=True,
+            collate_fn=collate_fn, num_workers=opt.num_threads, pin_memory=True)
         train_logger = Logger(os.path.join(opt.checkpoint_path, 'train.log'))
 
     if not opt.no_val:
-        val_dataset = URPCDataset(
-            opt.dataset_path, image_size=opt.image_size, split='val',
-            use_augmentation=False, box_type='yolo', cache=opt.cache, preprocessing=opt.preprocessing)
+        val_dataset = DUODataset(
+            root_dir=opt.dataset_path,
+            annotation_file=os.path.join(opt.dataset_path, "val.json"),
+            image_folder='image_folder',
+            split='val',
+            image_size=opt.image_size,
+            use_augmentation=False,
+            box_type='yolo',
+            cache=opt.cache,
+            preprocessing=opt.preprocessing)
         val_loader = DataLoader(
-            val_dataset, batch_size=opt.batch_size, shuffle=False, collate_fn=collate_fn)
+            val_dataset, batch_size=opt.batch_size, shuffle=False,
+            collate_fn=collate_fn, num_workers=opt.num_threads)
         val_logger = Logger(os.path.join(opt.checkpoint_path, 'val.log'))
 
     ########################################
@@ -83,11 +102,18 @@ if __name__ == "__main__":
     ########################################
     if opt.test:
         print("\n---- Testing Model ----")
-        test_dataset = URPCDataset(
-            opt.dataset_path, image_size=opt.image_size, split='test',
-            use_augmentation=False, box_type='yolo', preprocessing=opt.preprocessing)
+        test_dataset = DUODataset(
+            root_dir=opt.dataset_path,
+            annotation_file=os.path.join(opt.dataset_path, "test.json"),
+            image_folder='image_folder',
+            split='test',
+            image_size=opt.image_size,
+            use_augmentation=False,
+            box_type='yolo',
+            preprocessing=opt.preprocessing)
         test_loader = DataLoader(
-            test_dataset, batch_size=opt.batch_size, shuffle=False, collate_fn=collate_fn)
+            test_dataset, batch_size=opt.batch_size, shuffle=False,
+            collate_fn=collate_fn, num_workers=opt.num_threads)
 
         test(model, test_loader, opt.begin_epoch, opt)
     else:
@@ -95,6 +121,6 @@ if __name__ == "__main__":
             if not opt.no_train:
                 print("\n---- Training Model ----")
                 train(model, optimizer, scheduler, train_loader, epoch, opt, train_logger, best_mAP=best_mAP)
-            if not opt.no_val and (epoch+1) % opt.val_interval == 0:
+            if not opt.no_val and (epoch + 1) % opt.val_interval == 0:
                 print("\n---- Evaluating Model ----")
                 best_mAP = val(model, optimizer, scheduler, val_loader, epoch, opt, val_logger, best_mAP=best_mAP)
