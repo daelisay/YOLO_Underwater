@@ -1,9 +1,7 @@
 import os
 import torch
 from terminaltables import AsciiTable
-
 from tqdm import tqdm
-
 
 def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=0):
     model.train()
@@ -61,9 +59,6 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
                 epoch, opt.num_epochs, i, len(dataloader), best_mAP))
         metric_table.inner_footing_row_border = True
         logger.print_and_write('{}\n'.format(metric_table.table))
-
-        # Clear CUDA memory after each batch
-        torch.cuda.empty_cache()
 
     scheduler.step()
 
