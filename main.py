@@ -22,6 +22,19 @@ if __name__ == "__main__":
     opt.num_threads = min(opt.num_threads, 4)  # Limit workers for Kaggle
     seed_torch(opt.manual_seed)
 
+    # Ensure classname_path exists
+    if not os.path.exists(opt.classname_path):
+        os.makedirs(os.path.dirname(opt.classname_path), exist_ok=True)
+        with open(opt.classname_path, 'w') as f:
+            f.write('\n'.join([
+                "holothurian-seeweed",
+                "echinus",
+                "holothurian",
+                "scallop",
+                "starfish"
+            ]))
+        print(f"Created missing classname file at: {opt.classname_path}")
+
     if not opt.no_train:
         train_dataset = DUODataset(
             root_dir=opt.dataset_path,
