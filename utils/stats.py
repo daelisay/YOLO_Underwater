@@ -135,7 +135,7 @@ def get_batch_statistics(outputs, targets, indexes, iou_threshold):
 	# print(indexes.shape, indexes)
 	index_dict = {}
 	for i in range(indexes.size(0)):
-		index_dict[i] = indexes[i][0].item()
+		index_dict[i] = indexes[i].item()
 	# print('get_batch_statistics', indexes.device, index_dict)
 
 	# unlist = []
