@@ -426,7 +426,7 @@ def build_targets(pred_boxes, pred_cls, target, index, anchors, ignore_thres):
 	# Separate target values
 	index_dic = {}
 	for i in range(index.size(0)):
-		index_dic[int(index[i][0].item())] = i
+		index_dic[int(index[i].item())] = i
 	# print('build',index.device, index_dic)
 
 	b, target_labels = target[:, :2].long().t()
