@@ -38,7 +38,7 @@ class Opt():
 		self.parser.add_argument("--num_classes", type=int, default=5, help="# of classes of the dataset")
 		self.parser.add_argument('--num_epochs', type=int, default=200, help='# of epochs')
 		self.parser.add_argument('--begin_epoch', type=int, default=0, help='# of epochs')
-		self.parser.add_argument("--batch_size", type=int, default=8, help="batch size")
+		self.parser.add_argument("--batch_size", type=int, default=4, help="batch size")
 		self.parser.add_argument("--version", type=int, default=0, help="YOLO Underwater version")
 		self.parser.add_argument("--preprocessing", action="store_true", help="if true, use preprocessing module", default=False)
 
