@@ -10,10 +10,10 @@ from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 
 class DUODataset(torch.utils.data.Dataset):
     CLASSES_NAME = (
-        "echinus", "holothurian", "scallop", "starfish"
-    )  # sudah dihapus "holothurian-seeweed"
+        "holothurian-seeweed", "echinus", "holothurian", "scallop", "starfish"
+    )
 
-    def __init__(self, root_dir, annotation_file, image_folder='/kaggle/working/YOLO_Underwater/data/image_folder'',
+    def __init__(self, root_dir, annotation_file, image_folder='/kaggle/working/YOLO_Underwater/data/image_folder',
                  image_size=416, split='train', use_augmentation=False,
                  box_type='yolo', cache=False, preprocessing=False):
         self.root = root_dir
