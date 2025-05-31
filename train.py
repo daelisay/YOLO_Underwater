@@ -3,6 +3,7 @@ import torch
 from terminaltables import AsciiTable
 from tqdm import tqdm
 
+
 def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=0):
     model.train()
     device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
@@ -11,13 +12,13 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
         optimizer.zero_grad()
 
+        # Skip batch jika targets kosong
+        if targets is None or targets.numel() == 0:
+            continue
+
         # Pastikan targets 2D tensor
         if targets.dim() == 1:
             targets = targets.unsqueeze(0)
-
-        # Skip batch jika targets kosong
-        if targets.numel() == 0:
-            continue
 
         # Pindahkan tensor ke device
         images = images.to(device)
@@ -31,13 +32,21 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
 
         loss, detections = model(images, rep_targets, indexes)
 
+        # ⛔ Skip batch jika loss NaN
+        if torch.isnan(loss):
+            print(f"‼️ NaN detected at Epoch {epoch}, Batch {i}")
+            print("→ Skipping batch. Target shape:", targets.shape)
+            continue
+
         if ngpu > 1:
             loss = loss.sum()
 
         loss.backward()
         optimizer.step()
 
-        # Logging
+        # ===============================
+        # METRICS & LOGGING PER BATCH
+        # ===============================
         if ngpu > 1:
             metric_keys = model.module.yolo_layers[0].metrics.keys()
             yolo_metrics = [model.module.yolo_layers[i].metrics for i in range(len(model.module.yolo_layers))]
@@ -62,7 +71,9 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
 
     scheduler.step()
 
-    # Save checkpoints
+    # ===============================
+    # SAVE CHECKPOINTS
+    # ===============================
     states = {
         'epoch': epoch + 1,
         'model': opt.model,

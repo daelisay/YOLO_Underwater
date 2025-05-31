@@ -26,101 +26,6 @@ class FocalLoss(nn.Module):
             return loss
 
 
-def conv1x1(input_channels, output_channels, stride=1, bn=True, instance_norm=False):
-    if instance_norm:
-        return nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=stride, bias=False),
-            nn.InstanceNorm2d(output_channels),
-            nn.ReLU6(inplace=True)
-        )
-    elif bn:
-        return nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=stride, bias=False),
-            nn.BatchNorm2d(output_channels),
-            nn.ReLU6(inplace=True)
-        )
-    else:
-        return nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=stride, bias=False)
-
-
-def conv3x3(input_channels, output_channels, stride=1, bn=True, instance_norm=False):
-    if instance_norm:
-        return nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=stride, padding=1, bias=False),
-            nn.InstanceNorm2d(output_channels),
-            nn.ReLU6(inplace=True)
-        )
-    elif bn:
-        return nn.Sequential(
-            nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(output_channels),
-            nn.ReLU6(inplace=True)
-        )
-    else:
-        return nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=stride, padding=1, bias=False)
-
-
-def sepconv3x3(input_channels, output_channels, stride=1, expand_ratio=3):
-    return nn.Sequential(
-        nn.Conv2d(input_channels, input_channels * expand_ratio, kernel_size=1, stride=1, bias=False),
-        nn.BatchNorm2d(input_channels * expand_ratio),
-        nn.ReLU6(inplace=True),
-        nn.Conv2d(input_channels * expand_ratio, input_channels * expand_ratio,
-                  kernel_size=3, stride=stride, padding=1,
-                  groups=input_channels * expand_ratio, bias=False),
-        nn.BatchNorm2d(input_channels * expand_ratio),
-        nn.ReLU6(inplace=True),
-        nn.Conv2d(input_channels * expand_ratio, output_channels, kernel_size=1, stride=1, bias=False),
-        nn.BatchNorm2d(output_channels)
-    )
-
-
-class EP(nn.Module):
-    def __init__(self, input_channels, output_channels, stride=1, expand_ratio=3):
-        super(EP, self).__init__()
-        self.use_res_connect = stride == 1 and input_channels == output_channels
-        self.sepconv = sepconv3x3(input_channels, output_channels, stride=stride, expand_ratio=expand_ratio)
-
-    def forward(self, x):
-        if self.use_res_connect:
-            return x + self.sepconv(x)
-        return self.sepconv(x)
-
-
-class PEP(nn.Module):
-    def __init__(self, input_channels, output_channels, x, stride=1, expand_ratio=3):
-        super(PEP, self).__init__()
-        self.use_res_connect = stride == 1 and input_channels == output_channels
-        self.conv = conv1x1(input_channels, x)
-        self.sepconv = sepconv3x3(x, output_channels, stride=stride, expand_ratio=expand_ratio)
-
-    def forward(self, x):
-        out = self.conv(x)
-        out = self.sepconv(out)
-        if self.use_res_connect:
-            return out + x
-        return out
-
-
-class FCA(nn.Module):
-    def __init__(self, channels, reduction_ratio):
-        super(FCA, self).__init__()
-        hidden_channels = channels // reduction_ratio
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, hidden_channels, bias=False),
-            nn.ReLU6(inplace=True),
-            nn.Linear(hidden_channels, channels, bias=False),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        out = self.avg_pool(x).view(b, c)
-        out = self.fc(out).view(b, c, 1, 1)
-        return x * out.expand_as(x)
-
-
 class YOLOLayer(nn.Module):
     def __init__(self, anchors, num_classes, img_dim=416):
         super(YOLOLayer, self).__init__()
@@ -163,8 +68,17 @@ class YOLOLayer(nn.Module):
         y = torch.sigmoid(prediction[..., 1])
         w = prediction[..., 2]
         h = prediction[..., 3]
-        raw_conf = prediction[..., 4]  # no sigmoid
-        raw_cls = prediction[..., 5:]  # no sigmoid
+        raw_conf = prediction[..., 4]
+        raw_cls = prediction[..., 5:]
+
+        # Clamp untuk menghindari logit ekstrem
+        clamp_val = 10.0
+        raw_conf = torch.clamp(raw_conf, -clamp_val, clamp_val)
+        raw_cls = torch.clamp(raw_cls, -clamp_val, clamp_val)
+
+        if targets is not None:
+            print("DEBUG - raw_conf range:", raw_conf.min().item(), raw_conf.max().item())
+            print("DEBUG - raw_cls range:", raw_cls.min().item(), raw_cls.max().item())
 
         if grid_size != self.grid_size:
             self.compute_grid_offsets(grid_size, cuda=x.is_cuda)
