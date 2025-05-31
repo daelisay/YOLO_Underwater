@@ -112,37 +112,40 @@ class YOLO_Underwater(nn.Module):
         out = torch.cat([out, out_pep6], dim=1)
         out = self.pep20(out)
 
+        # YOLO Layer 52
         out_reg_iou = self.pep22_reg_iou(out)
         out_cls = self.pep22_cls(out)
         out_reg_iou = self.dropout(out_reg_iou)
         out_cls = self.dropout(out_cls)
         out_conv9_reg = self.conv9_reg(out_reg_iou)
         out_conv9_iou = self.conv9_iou(out_reg_iou)
-        out_conv9_cls = self.conv9_cls(out_cls)  # ⬅️ HAPUS SIGMOID
+        out_conv9_cls = self.conv9_cls(out_cls)  # no sigmoid here (handled in loss)
         out_conv9 = torch.cat([out_conv9_reg, out_conv9_iou, out_conv9_cls], dim=1)
         temp, layer_loss = self.yolo_layer52(out_conv9, targets, indexes, image_size)
         loss += layer_loss
         yolo_outputs.append(temp)
 
+        # YOLO Layer 26
         out_reg_iou = self.ep6_reg_iou(out_conv7)
         out_cls = self.ep6_cls(out_conv7)
         out_reg_iou = self.dropout(out_reg_iou)
         out_cls = self.dropout(out_cls)
         out_conv10_reg = self.conv10_reg(out_reg_iou)
         out_conv10_iou = self.conv10_iou(out_reg_iou)
-        out_conv10_cls = self.conv10_cls(out_cls)  # ⬅️ HAPUS SIGMOID
+        out_conv10_cls = self.conv10_cls(out_cls)
         out_conv10 = torch.cat([out_conv10_reg, out_conv10_iou, out_conv10_cls], dim=1)
         temp, layer_loss = self.yolo_layer26(out_conv10, targets, indexes, image_size)
         loss += layer_loss
         yolo_outputs.append(temp)
 
+        # YOLO Layer 13
         out_reg_iou = self.ep7_reg_iou(cat_2)
         out_cls = self.ep7_cls(cat_2)
         out_reg_iou = self.dropout(out_reg_iou)
         out_cls = self.dropout(out_cls)
         out_conv11_reg = self.conv11_reg(out_reg_iou)
         out_conv11_iou = self.conv11_iou(out_reg_iou)
-        out_conv11_cls = self.conv11_cls(out_cls)  # ⬅️ HAPUS SIGMOID
+        out_conv11_cls = self.conv11_cls(out_cls)
         out_conv11 = torch.cat([out_conv11_reg, out_conv11_iou, out_conv11_cls], dim=1)
         temp, layer_loss = self.yolo_layer13(out_conv11, targets, indexes, image_size)
         loss += layer_loss

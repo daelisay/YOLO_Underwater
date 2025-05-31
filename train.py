@@ -3,7 +3,6 @@ import torch
 from terminaltables import AsciiTable
 from tqdm import tqdm
 
-
 def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=0):
     model.train()
     device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
@@ -12,69 +11,53 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
         optimizer.zero_grad()
 
-        # Skip batch jika targets kosong
+        # Skip batch jika tidak ada target
         if targets is None or targets.numel() == 0:
             continue
 
-        # Pastikan targets 2D tensor
+        # Pastikan dimensi batch match
         if targets.dim() == 1:
             targets = targets.unsqueeze(0)
 
-        # Pindahkan tensor ke device
         images = images.to(device)
         targets = targets.to(device)
         indexes = indexes.to(device)
 
-        rep_targets = []
-        for _ in range(ngpu):
-            rep_targets.append(targets.unsqueeze(0))
+        # Duplikat target untuk multi-GPU
+        rep_targets = [targets.unsqueeze(0) for _ in range(ngpu)]
         rep_targets = torch.cat(rep_targets, dim=0).to(device)
 
+        # Forward dan backward
         loss, detections = model(images, rep_targets, indexes)
-
-        # ⛔ Skip batch jika loss NaN
-        if torch.isnan(loss):
-            print(f"‼️ NaN detected at Epoch {epoch}, Batch {i}")
-            print("→ Skipping batch. Target shape:", targets.shape)
-            continue
-
         if ngpu > 1:
             loss = loss.sum()
-
         loss.backward()
         optimizer.step()
 
-        # ===============================
-        # METRICS & LOGGING PER BATCH
-        # ===============================
+        # Ambil metrik dari layer YOLO
         if ngpu > 1:
-            metric_keys = model.module.yolo_layers[0].metrics.keys()
-            yolo_metrics = [model.module.yolo_layers[i].metrics for i in range(len(model.module.yolo_layers))]
+            yolo_layers = model.module.yolo_layers
         else:
-            metric_keys = model.yolo_layers[0].metrics.keys()
-            yolo_metrics = [model.yolo_layers[i].metrics for i in range(len(model.yolo_layers))]
+            yolo_layers = model.yolo_layers
 
-        layer_header = ['YOLO Layer {}'.format(i) for i in range(len(yolo_metrics))]
-        metric_table_data = [['Metrics', *layer_header]]
-        formats = {m: '%.6f' for m in metric_keys}
-        for metric in metric_keys:
-            row_metrics = [formats[metric] % ym.get(metric, 0) for ym in yolo_metrics]
-            metric_table_data += [[metric, *row_metrics]]
-        metric_table_data += [['total loss', '{:.6f}'.format(loss.item()), '', '']]
+        metric_keys = yolo_layers[0].metrics.keys()
+        metric_table_data = [['Metrics'] + [f'YOLO Layer {i}' for i in range(len(yolo_layers))]]
+        for key in metric_keys:
+            row = [key] + [f"{yl.metrics.get(key, 0):.6f}" for yl in yolo_layers]
+            metric_table_data.append(row)
+        metric_table_data.append(['Total loss', f'{loss.item():.6f}'] + [''] * (len(yolo_layers) - 1))
 
         metric_table = AsciiTable(
             metric_table_data,
-            title='[Epoch {:d}/{:d}, Batch {:d}/{:d}, Current best mAP {:.4f}]'.format(
-                epoch, opt.num_epochs, i, len(dataloader), best_mAP))
+            title=f'[Epoch {epoch}/{opt.num_epochs}, Batch {i}/{len(dataloader)}, Current best mAP {best_mAP:.4f}]'
+        )
         metric_table.inner_footing_row_border = True
-        logger.print_and_write('{}\n'.format(metric_table.table))
+        logger.print_and_write(f'{metric_table.table}\n')
 
     scheduler.step()
 
-    # ===============================
-    # SAVE CHECKPOINTS
-    # ===============================
-    states = {
+    # Simpan checkpoint
+    state = {
         'epoch': epoch + 1,
         'model': opt.model,
         'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
@@ -83,9 +66,9 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
         'best_mAP': best_mAP,
     }
 
-    save_file_path = os.path.join(opt.checkpoint_path, 'last.pth')
-    torch.save(states, save_file_path)
+    last_ckpt_path = os.path.join(opt.checkpoint_path, 'last.pth')
+    torch.save(state, last_ckpt_path)
 
     if epoch % opt.checkpoint_interval == 0:
-        save_file_path = os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pth')
-        torch.save(states, save_file_path)
+        epoch_ckpt_path = os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pth')
+        torch.save(state, epoch_ckpt_path)
