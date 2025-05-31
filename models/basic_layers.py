@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from utils.stats import build_targets, to_cpu
 
 class FocalLoss(nn.Module):
@@ -8,87 +7,14 @@ class FocalLoss(nn.Module):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
-        self.bce = nn.BCELoss(reduction="none")
+        self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
     def forward(self, inputs, targets):
         bce_loss = self.bce(inputs, targets)
-        pt = torch.exp(-bce_loss)
-        loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
-        return loss.mean()
-
-def conv1x1(in_channels, out_channels, stride=1, bn=True, instance_norm=False):
-    layers = [nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)]
-    if instance_norm:
-        layers.append(nn.InstanceNorm2d(out_channels))
-    elif bn:
-        layers.append(nn.BatchNorm2d(out_channels))
-    layers.append(nn.ReLU6(inplace=True))
-    return nn.Sequential(*layers)
-
-def conv3x3(in_channels, out_channels, stride=1, bn=True, instance_norm=False):
-    layers = [nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)]
-    if instance_norm:
-        layers.append(nn.InstanceNorm2d(out_channels))
-    elif bn:
-        layers.append(nn.BatchNorm2d(out_channels))
-    layers.append(nn.ReLU6(inplace=True))
-    return nn.Sequential(*layers)
-
-def sepconv3x3(in_channels, out_channels, stride=1, expand_ratio=3):
-    hidden_dim = in_channels * expand_ratio
-    return nn.Sequential(
-        nn.Conv2d(in_channels, hidden_dim, kernel_size=1, bias=False),
-        nn.BatchNorm2d(hidden_dim),
-        nn.ReLU6(inplace=True),
-        nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=stride, padding=1, groups=hidden_dim, bias=False),
-        nn.BatchNorm2d(hidden_dim),
-        nn.ReLU6(inplace=True),
-        nn.Conv2d(hidden_dim, out_channels, kernel_size=1, bias=False),
-        nn.BatchNorm2d(out_channels),
-    )
-
-class EP(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, expand_ratio=3):
-        super(EP, self).__init__()
-        self.use_res_connect = stride == 1 and in_channels == out_channels
-        self.sepconv = sepconv3x3(in_channels, out_channels, stride=stride, expand_ratio=expand_ratio)
-
-    def forward(self, x):
-        if self.use_res_connect:
-            return x + self.sepconv(x)
-        return self.sepconv(x)
-
-class PEP(nn.Module):
-    def __init__(self, in_channels, out_channels, hidden_dim, stride=1, expand_ratio=3):
-        super(PEP, self).__init__()
-        self.use_res_connect = stride == 1 and in_channels == out_channels
-        self.conv = conv1x1(in_channels, hidden_dim)
-        self.sepconv = sepconv3x3(hidden_dim, out_channels, stride=stride, expand_ratio=expand_ratio)
-
-    def forward(self, x):
-        out = self.conv(x)
-        out = self.sepconv(out)
-        if self.use_res_connect:
-            return out + x
-        return out
-
-class FCA(nn.Module):
-    def __init__(self, channels, reduction_ratio=16):
-        super(FCA, self).__init__()
-        hidden_channels = max(1, channels // reduction_ratio)
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, hidden_channels, bias=False),
-            nn.ReLU6(inplace=True),
-            nn.Linear(hidden_channels, channels, bias=False),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y.expand_as(x)
+        probas = torch.sigmoid(inputs)
+        pt = torch.where(targets == 1, probas, 1 - probas)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+        return focal_loss.mean()
 
 class YOLOLayer(nn.Module):
     def __init__(self, anchors, num_classes, img_dim=416):
@@ -128,61 +54,72 @@ class YOLOLayer(nn.Module):
             .contiguous()
         )
 
-        x = torch.sigmoid(prediction[..., 0])  # center x
-        y = torch.sigmoid(prediction[..., 1])  # center y
-        w = prediction[..., 2]  # width
-        h = prediction[..., 3]  # height
-        pred_conf = torch.sigmoid(prediction[..., 4])  # objectness score
-        pred_cls = torch.sigmoid(prediction[..., 5:])  # class probabilities
+        # Decode components
+        x_center = torch.sigmoid(prediction[..., 0])
+        y_center = torch.sigmoid(prediction[..., 1])
+        w = prediction[..., 2]
+        h = prediction[..., 3]
+        raw_conf = prediction[..., 4]          # logit
+        raw_cls = prediction[..., 5:]          # logit
 
         if grid_size != self.grid_size:
             self.compute_grid_offsets(grid_size, cuda=x.is_cuda)
 
         pred_boxes = FloatTensor(prediction[..., :4].shape)
-        pred_boxes[..., 0] = x.data + self.grid_x
-        pred_boxes[..., 1] = y.data + self.grid_y
+        pred_boxes[..., 0] = x_center.data + self.grid_x
+        pred_boxes[..., 1] = y_center.data + self.grid_y
         pred_boxes[..., 2] = torch.exp(w.data) * self.anchor_w
         pred_boxes[..., 3] = torch.exp(h.data) * self.anchor_h
 
         output = torch.cat([
             pred_boxes.view(num_samples, -1, 4) * self.stride,
-            pred_conf.view(num_samples, -1, 1),
-            pred_cls.view(num_samples, -1, self.num_classes)
+            torch.sigmoid(raw_conf).view(num_samples, -1, 1),
+            torch.sigmoid(raw_cls).view(num_samples, -1, self.num_classes)
         ], -1)
 
         if targets is None:
             return output, 0
 
+        # Training mode
         targets = targets.squeeze(dim=0)
         iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf = build_targets(
             pred_boxes=pred_boxes,
-            pred_cls=pred_cls,
+            pred_cls=torch.sigmoid(raw_cls),
             target=targets,
             index=indexes,
             anchors=self.scaled_anchors,
             ignore_thres=self.ignore_thres,
         )
 
-        loss_x = self.mse_loss(x[obj_mask], tx[obj_mask])
-        loss_y = self.mse_loss(y[obj_mask], ty[obj_mask])
+        # Clamp logit to avoid extreme gradient explosions
+        raw_conf = torch.clamp(raw_conf, -10, 10)
+        raw_cls = torch.clamp(raw_cls, -10, 10)
+
+        loss_x = self.mse_loss(x_center[obj_mask], tx[obj_mask])
+        loss_y = self.mse_loss(y_center[obj_mask], ty[obj_mask])
         loss_w = self.mse_loss(w[obj_mask], tw[obj_mask])
         loss_h = self.mse_loss(h[obj_mask], th[obj_mask])
-        loss_conf_obj = self.bce_loss(pred_conf[obj_mask], tconf[obj_mask])
-        loss_conf_noobj = self.bce_loss(pred_conf[noobj_mask], tconf[noobj_mask])
+
+        loss_conf_obj = self.bce_loss(raw_conf[obj_mask], tconf[obj_mask])
+        loss_conf_noobj = self.bce_loss(raw_conf[noobj_mask], tconf[noobj_mask])
         loss_conf = self.obj_scale * loss_conf_obj + self.noobj_scale * loss_conf_noobj
-        loss_cls = self.bce_loss(pred_cls[obj_mask], tcls[obj_mask])
+
+        loss_cls = self.bce_loss(raw_cls[obj_mask], tcls[obj_mask])
+
         total_loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
 
-        cls_acc = 100 * class_mask[obj_mask].mean()
-        conf_obj = pred_conf[obj_mask].mean()
-        conf_noobj = pred_conf[noobj_mask].mean()
-        conf50 = (pred_conf > 0.5).float()
-        iou50 = (iou_scores > 0.5).float()
-        iou75 = (iou_scores > 0.75).float()
-        detected_mask = conf50 * class_mask * tconf
-        precision = torch.sum(iou50 * detected_mask) / (conf50.sum() + 1e-16)
-        recall50 = torch.sum(iou50 * detected_mask) / (obj_mask.sum() + 1e-16)
-        recall75 = torch.sum(iou75 * detected_mask) / (obj_mask.sum() + 1e-16)
+        # Metrics (using sigmoid to get probas)
+        with torch.no_grad():
+            pred_conf = torch.sigmoid(raw_conf)
+            conf_obj = pred_conf[obj_mask].mean()
+            conf_noobj = pred_conf[noobj_mask].mean()
+            conf50 = (pred_conf > 0.5).float()
+            iou50 = (iou_scores > 0.5).float()
+            iou75 = (iou_scores > 0.75).float()
+            detected_mask = conf50 * class_mask * tconf
+            precision = torch.sum(iou50 * detected_mask) / (conf50.sum() + 1e-16)
+            recall50 = torch.sum(iou50 * detected_mask) / (obj_mask.sum() + 1e-16)
+            recall75 = torch.sum(iou75 * detected_mask) / (obj_mask.sum() + 1e-16)
 
         self.metrics = {
             "loss": to_cpu(total_loss).item(),
@@ -192,7 +129,7 @@ class YOLOLayer(nn.Module):
             "h": to_cpu(loss_h).item(),
             "conf": to_cpu(loss_conf).item(),
             "cls": to_cpu(loss_cls).item(),
-            "cls_acc": to_cpu(cls_acc).item(),
+            "cls_acc": to_cpu(class_mask[obj_mask].float().mean()).item(),
             "recall50": to_cpu(recall50).item(),
             "recall75": to_cpu(recall75).item(),
             "precision": to_cpu(precision).item(),
