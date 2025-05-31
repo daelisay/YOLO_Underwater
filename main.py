@@ -87,6 +87,19 @@ if __name__ == "__main__":
         model = nn.DataParallel(model)
 
     model = model.to(opt.device)
+    
+    try:
+        from fvcore.nn import FlopCountAnalysis, parameter_count
+        dummy_input = torch.randn(1, 3, opt.image_size, opt.image_size).to(opt.device)
+        flops = FlopCountAnalysis(model, dummy_input)
+        params = parameter_count(model)
+
+        print(f"\n📊 Model Complexity:")
+        print(f"FLOPs: {flops.total() / 1e9:.2f} GFLOPs")
+        print(f"Parameters: {params[''] / 1e6:.2f} Million\n")
+
+    except ImportError:
+        print("fvcore not installed. Run 'pip install fvcore' to enable FLOPs analysis.")
 
     if opt.test:
         test_dataset = DUODataset(
