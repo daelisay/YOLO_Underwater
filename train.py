@@ -11,11 +11,9 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
         optimizer.zero_grad()
 
-        # Skip batch jika tidak ada target
         if targets is None or targets.numel() == 0:
             continue
 
-        # Pastikan dimensi batch match
         if targets.dim() == 1:
             targets = targets.unsqueeze(0)
 
@@ -23,18 +21,16 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
         targets = targets.to(device)
         indexes = indexes.to(device)
 
-        # Duplikat target untuk multi-GPU
         rep_targets = [targets.unsqueeze(0) for _ in range(ngpu)]
         rep_targets = torch.cat(rep_targets, dim=0).to(device)
 
-        # Forward dan backward
         loss, detections = model(images, rep_targets, indexes)
         if ngpu > 1:
             loss = loss.sum()
+
         loss.backward()
         optimizer.step()
 
-        # Ambil metrik dari layer YOLO
         if ngpu > 1:
             yolo_layers = model.module.yolo_layers
         else:
@@ -56,7 +52,6 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
 
     scheduler.step()
 
-    # Simpan checkpoint
     state = {
         'epoch': epoch + 1,
         'model': opt.model,
@@ -66,9 +61,7 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
         'best_mAP': best_mAP,
     }
 
-    last_ckpt_path = os.path.join(opt.checkpoint_path, 'last.pth')
-    torch.save(state, last_ckpt_path)
+    torch.save(state, os.path.join(opt.checkpoint_path, 'last.pth'))
 
     if epoch % opt.checkpoint_interval == 0:
-        epoch_ckpt_path = os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pth')
-        torch.save(state, epoch_ckpt_path)
+        torch.save(state, os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pth'))
