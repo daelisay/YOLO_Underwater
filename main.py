@@ -1,120 +1,80 @@
 import os
-import time
 import torch
-import torch.nn as nn
+from terminaltables import AsciiTable
+from tqdm import tqdm
 
-from dataloader.DUODataset import DUODataset, collate_fn
-from torch.utils.data import DataLoader
-from models.select_model import select_model
+def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=0):
+    model.train()
+    device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
+    ngpu = torch.cuda.device_count() if device.type == "cuda" else 1
 
-from utils.opts import Opt
-from utils.logger import Logger
-from utils.utils import seed_torch
+    for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
+        optimizer.zero_grad()
 
-from train import train
-from val import val
-from test import test
+        # Pastikan targets 2D tensor
+        if targets.dim() == 1:
+            targets = targets.unsqueeze(0)
 
-if __name__ == "__main__":
-    opt = Opt().parse()
-    opt.device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
-    opt.num_classes = 5
-    opt.num_threads = min(opt.num_threads, 4)  # Limit workers for Kaggle
-    seed_torch(opt.manual_seed)
+        # Skip batch jika targets kosong
+        if targets.numel() == 0:
+            continue
 
-    # Ensure classname_path exists
-    if not os.path.exists(opt.classname_path):
-        os.makedirs(os.path.dirname(opt.classname_path), exist_ok=True)
-        with open(opt.classname_path, 'w') as f:
-            f.write('\n'.join([
-                "holothurian-seeweed",
-                "echinus",
-                "holothurian",
-                "scallop",
-                "starfish"
-            ]))
-        print(f"Created missing classname file at: {opt.classname_path}")
+        # Pindahkan tensor ke device
+        images = images.to(device)
+        targets = targets.to(device)
+        indexes = indexes.to(device)
 
-    if not opt.no_train:
-        train_dataset = DUODataset(
-            root_dir=opt.dataset_path,
-            annotation_file=os.path.join(opt.dataset_path, "train.json"),
-            image_folder='image_folder',
-            split='train', image_size=opt.image_size,
-            use_augmentation=True, box_type='yolo',
-            cache=opt.cache, preprocessing=opt.preprocessing)
-        train_loader = DataLoader(
-            train_dataset, batch_size=opt.batch_size, shuffle=True,
-            collate_fn=collate_fn, num_workers=opt.num_threads, pin_memory=True)
-        train_logger = Logger(os.path.join(opt.checkpoint_path, 'train.log'))
+        rep_targets = []
+        for _ in range(ngpu):
+            rep_targets.append(targets.unsqueeze(0))
+        rep_targets = torch.cat(rep_targets, dim=0).to(device)
 
-    if not opt.no_val:
-        val_dataset = DUODataset(
-            root_dir=opt.dataset_path,
-            annotation_file=os.path.join(opt.dataset_path, "val.json"),
-            image_folder='image_folder',
-            split='val', image_size=opt.image_size,
-            use_augmentation=False, box_type='yolo',
-            cache=opt.cache, preprocessing=opt.preprocessing)
-        val_loader = DataLoader(
-            val_dataset, batch_size=opt.batch_size, shuffle=False,
-            collate_fn=collate_fn, num_workers=opt.num_threads)
-        val_logger = Logger(os.path.join(opt.checkpoint_path, 'val.log'))
+        loss, detections = model(images, rep_targets, indexes)
 
-    best_mAP = 0
-    torch.manual_seed(opt.manual_seed)
-    model = select_model(opt)
+        if ngpu > 1:
+            loss = loss.sum()
 
-    if opt.optimizer == 'Adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
-    elif opt.optimizer == 'SGD':
-        optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
-    else:
-        raise NotImplementedError("Only Adam and SGD are supported")
+        loss.backward()
+        optimizer.step()
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=opt.num_epochs)
+        # Logging
+        if ngpu > 1:
+            metric_keys = model.module.yolo_layers[0].metrics.keys()
+            yolo_metrics = [model.module.yolo_layers[i].metrics for i in range(len(model.module.yolo_layers))]
+        else:
+            metric_keys = model.yolo_layers[0].metrics.keys()
+            yolo_metrics = [model.yolo_layers[i].metrics for i in range(len(model.yolo_layers))]
 
-    if opt.resume_path:
-        checkpoint = torch.load(opt.resume_path)
-        model.load_state_dict(checkpoint['state_dict'])
-        opt.begin_epoch = checkpoint['epoch']
-        if not opt.no_train and not opt.pretrain:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            scheduler.load_state_dict(checkpoint['scheduler'])
-        best_mAP = checkpoint["best_mAP"]
+        layer_header = ['YOLO Layer {}'.format(i) for i in range(len(yolo_metrics))]
+        metric_table_data = [['Metrics', *layer_header]]
+        formats = {m: '%.6f' for m in metric_keys}
+        for metric in metric_keys:
+            row_metrics = [formats[metric] % ym.get(metric, 0) for ym in yolo_metrics]
+            metric_table_data += [[metric, *row_metrics]]
+        metric_table_data += [['total loss', '{:.6f}'.format(loss.item()), '', '']]
 
-    if torch.cuda.device_count() > 1:
-        model = nn.DataParallel(model)
+        metric_table = AsciiTable(
+            metric_table_data,
+            title='[Epoch {:d}/{:d}, Batch {:d}/{:d}, Current best mAP {:.4f}]'.format(
+                epoch, opt.num_epochs, i, len(dataloader), best_mAP))
+        metric_table.inner_footing_row_border = True
+        logger.print_and_write('{}\n'.format(metric_table.table))
 
-    model = model.to(opt.device)
-    
-    try:
-        from fvcore.nn import FlopCountAnalysis, parameter_count
-        dummy_input = torch.randn(1, 3, opt.image_size, opt.image_size).to(opt.device)
-        flops = FlopCountAnalysis(model, dummy_input)
-        params = parameter_count(model)
+    scheduler.step()
 
-        print(f"\n📊 Model Complexity:")
-        print(f"FLOPs: {flops.total() / 1e9:.2f} GFLOPs")
-        print(f"Parameters: {params[''] / 1e6:.2f} Million\n")
+    # Save checkpoints
+    states = {
+        'epoch': epoch + 1,
+        'model': opt.model,
+        'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'best_mAP': best_mAP,
+    }
 
-    except ImportError:
-        print("fvcore not installed. Run 'pip install fvcore' to enable FLOPs analysis.")
+    save_file_path = os.path.join(opt.checkpoint_path, 'last.pth')
+    torch.save(states, save_file_path)
 
-    if opt.test:
-        test_dataset = DUODataset(
-            root_dir=opt.dataset_path,
-            annotation_file=os.path.join(opt.dataset_path, "test.json"),
-            image_folder='image_folder', split='test',
-            image_size=opt.image_size, use_augmentation=False,
-            box_type='yolo', preprocessing=opt.preprocessing)
-        test_loader = DataLoader(
-            test_dataset, batch_size=opt.batch_size, shuffle=False,
-            collate_fn=collate_fn, num_workers=opt.num_threads)
-        test(model, test_loader, opt.begin_epoch, opt)
-    else:
-        for epoch in range(opt.begin_epoch, opt.num_epochs):
-            if not opt.no_train:
-                train(model, optimizer, scheduler, train_loader, epoch, opt, train_logger, best_mAP)
-            if not opt.no_val and (epoch + 1) % opt.val_interval == 0:
-                best_mAP = val(model, optimizer, scheduler, val_loader, epoch, opt, val_logger, best_mAP)
+    if epoch % opt.checkpoint_interval == 0:
+        save_file_path = os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pth')
+        torch.save(states, save_file_path)
