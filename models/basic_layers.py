@@ -112,6 +112,13 @@ class FCA(nn.Module):
         return x * y.expand_as(x)
 
 
+def safe_loss(loss_func, pred, target):
+    if pred.numel() == 0 or target.numel() == 0:
+        return torch.tensor(0., device=pred.device)
+    else:
+        return loss_func(pred, target)
+
+
 class YOLOLayer(nn.Module):
     def __init__(self, anchors, num_classes, img_dim=416):
         super(YOLOLayer, self).__init__()
@@ -150,13 +157,12 @@ class YOLOLayer(nn.Module):
             .contiguous()
         )
 
-        # Decode output components
         x_center = torch.sigmoid(prediction[..., 0])
         y_center = torch.sigmoid(prediction[..., 1])
         w = prediction[..., 2]
         h = prediction[..., 3]
-        raw_conf = prediction[..., 4]  # logits for objectness
-        raw_cls = prediction[..., 5:]  # logits for classes
+        raw_conf = prediction[..., 4]
+        raw_cls = prediction[..., 5:]
 
         if grid_size != self.grid_size:
             self.compute_grid_offsets(grid_size, cuda=x.is_cuda)
@@ -167,7 +173,6 @@ class YOLOLayer(nn.Module):
         pred_boxes[..., 2] = torch.exp(w.data) * self.anchor_w
         pred_boxes[..., 3] = torch.exp(h.data) * self.anchor_h
 
-        # Compose output tensor for inference
         output = torch.cat([
             pred_boxes.view(num_samples, -1, 4) * self.stride,
             torch.sigmoid(raw_conf).view(num_samples, -1, 1),
@@ -187,20 +192,25 @@ class YOLOLayer(nn.Module):
             ignore_thres=self.ignore_thres,
         )
 
-        # Clamp logits to prevent extreme gradients
+        # DEBUG PRINTS
+        print("DEBUG tconf min/max:", tconf.min().item(), tconf.max().item())
+        print("DEBUG tcls min/max:", tcls.min().item(), tcls.max().item())
+        print("DEBUG obj_mask sum:", obj_mask.sum().item())
+        print("DEBUG noobj_mask sum:", noobj_mask.sum().item())
+
         raw_conf = torch.clamp(raw_conf, -10, 10)
         raw_cls = torch.clamp(raw_cls, -10, 10)
 
-        loss_x = self.mse_loss(x_center[obj_mask], tx[obj_mask])
-        loss_y = self.mse_loss(y_center[obj_mask], ty[obj_mask])
-        loss_w = self.mse_loss(w[obj_mask], tw[obj_mask])
-        loss_h = self.mse_loss(h[obj_mask], th[obj_mask])
+        loss_x = safe_loss(self.mse_loss, x_center[obj_mask], tx[obj_mask])
+        loss_y = safe_loss(self.mse_loss, y_center[obj_mask], ty[obj_mask])
+        loss_w = safe_loss(self.mse_loss, w[obj_mask], tw[obj_mask])
+        loss_h = safe_loss(self.mse_loss, h[obj_mask], th[obj_mask])
 
-        loss_conf_obj = self.bce_loss(raw_conf[obj_mask], tconf[obj_mask])
-        loss_conf_noobj = self.bce_loss(raw_conf[noobj_mask], tconf[noobj_mask])
+        loss_conf_obj = safe_loss(self.bce_loss, raw_conf[obj_mask], tconf[obj_mask])
+        loss_conf_noobj = safe_loss(self.bce_loss, raw_conf[noobj_mask], tconf[noobj_mask])
         loss_conf = self.obj_scale * loss_conf_obj + self.noobj_scale * loss_conf_noobj
 
-        loss_cls = self.bce_loss(raw_cls[obj_mask], tcls[obj_mask])
+        loss_cls = safe_loss(self.bce_loss, raw_cls[obj_mask], tcls[obj_mask])
 
         total_loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
 
