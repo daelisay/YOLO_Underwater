@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from utils.stats import build_targets, to_cpu
 
+
 class FocalLoss(nn.Module):
     def __init__(self, alpha=1.0, gamma=2.0):
         super(FocalLoss, self).__init__()
@@ -15,6 +16,101 @@ class FocalLoss(nn.Module):
         pt = torch.where(targets == 1, probas, 1 - probas)
         focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
         return focal_loss.mean()
+
+
+def conv1x1(input_channels, output_channels, stride=1, bn=True, instance_norm=False):
+    if instance_norm:
+        return nn.Sequential(
+            nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=stride, bias=False),
+            nn.InstanceNorm2d(output_channels),
+            nn.ReLU6(inplace=True)
+        )
+    elif bn:
+        return nn.Sequential(
+            nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=stride, bias=False),
+            nn.BatchNorm2d(output_channels),
+            nn.ReLU6(inplace=True)
+        )
+    else:
+        return nn.Conv2d(input_channels, output_channels, kernel_size=1, stride=stride, bias=False)
+
+
+def conv3x3(input_channels, output_channels, stride=1, bn=True, instance_norm=False):
+    if instance_norm:
+        return nn.Sequential(
+            nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.InstanceNorm2d(output_channels),
+            nn.ReLU6(inplace=True)
+        )
+    elif bn:
+        return nn.Sequential(
+            nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(output_channels),
+            nn.ReLU6(inplace=True)
+        )
+    else:
+        return nn.Conv2d(input_channels, output_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+
+
+def sepconv3x3(input_channels, output_channels, stride=1, expand_ratio=3):
+    hidden_dim = input_channels * expand_ratio
+    return nn.Sequential(
+        nn.Conv2d(input_channels, hidden_dim, kernel_size=1, stride=1, bias=False),
+        nn.BatchNorm2d(hidden_dim),
+        nn.ReLU6(inplace=True),
+        nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, stride=stride, padding=1, groups=hidden_dim, bias=False),
+        nn.BatchNorm2d(hidden_dim),
+        nn.ReLU6(inplace=True),
+        nn.Conv2d(hidden_dim, output_channels, kernel_size=1, stride=1, bias=False),
+        nn.BatchNorm2d(output_channels)
+    )
+
+
+class EP(nn.Module):
+    def __init__(self, input_channels, output_channels, stride=1, expand_ratio=3):
+        super(EP, self).__init__()
+        self.use_res_connect = stride == 1 and input_channels == output_channels
+        self.sepconv = sepconv3x3(input_channels, output_channels, stride=stride, expand_ratio=expand_ratio)
+
+    def forward(self, x):
+        if self.use_res_connect:
+            return x + self.sepconv(x)
+        return self.sepconv(x)
+
+
+class PEP(nn.Module):
+    def __init__(self, input_channels, output_channels, hidden_channels, stride=1, expand_ratio=3):
+        super(PEP, self).__init__()
+        self.use_res_connect = stride == 1 and input_channels == output_channels
+        self.conv = conv1x1(input_channels, hidden_channels)
+        self.sepconv = sepconv3x3(hidden_channels, output_channels, stride=stride, expand_ratio=expand_ratio)
+
+    def forward(self, x):
+        out = self.conv(x)
+        out = self.sepconv(out)
+        if self.use_res_connect:
+            return out + x
+        return out
+
+
+class FCA(nn.Module):
+    def __init__(self, channels, reduction_ratio=16):
+        super(FCA, self).__init__()
+        hidden_channels = max(1, channels // reduction_ratio)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, hidden_channels, bias=False),
+            nn.ReLU6(inplace=True),
+            nn.Linear(hidden_channels, channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
+
 
 class YOLOLayer(nn.Module):
     def __init__(self, anchors, num_classes, img_dim=416):
@@ -54,13 +150,13 @@ class YOLOLayer(nn.Module):
             .contiguous()
         )
 
-        # Decode components
+        # Decode output components
         x_center = torch.sigmoid(prediction[..., 0])
         y_center = torch.sigmoid(prediction[..., 1])
         w = prediction[..., 2]
         h = prediction[..., 3]
-        raw_conf = prediction[..., 4]          # logit
-        raw_cls = prediction[..., 5:]          # logit
+        raw_conf = prediction[..., 4]  # logits for objectness
+        raw_cls = prediction[..., 5:]  # logits for classes
 
         if grid_size != self.grid_size:
             self.compute_grid_offsets(grid_size, cuda=x.is_cuda)
@@ -71,6 +167,7 @@ class YOLOLayer(nn.Module):
         pred_boxes[..., 2] = torch.exp(w.data) * self.anchor_w
         pred_boxes[..., 3] = torch.exp(h.data) * self.anchor_h
 
+        # Compose output tensor for inference
         output = torch.cat([
             pred_boxes.view(num_samples, -1, 4) * self.stride,
             torch.sigmoid(raw_conf).view(num_samples, -1, 1),
@@ -80,7 +177,6 @@ class YOLOLayer(nn.Module):
         if targets is None:
             return output, 0
 
-        # Training mode
         targets = targets.squeeze(dim=0)
         iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf = build_targets(
             pred_boxes=pred_boxes,
@@ -91,7 +187,7 @@ class YOLOLayer(nn.Module):
             ignore_thres=self.ignore_thres,
         )
 
-        # Clamp logit to avoid extreme gradient explosions
+        # Clamp logits to prevent extreme gradients
         raw_conf = torch.clamp(raw_conf, -10, 10)
         raw_cls = torch.clamp(raw_cls, -10, 10)
 
@@ -108,7 +204,6 @@ class YOLOLayer(nn.Module):
 
         total_loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
 
-        # Metrics (using sigmoid to get probas)
         with torch.no_grad():
             pred_conf = torch.sigmoid(raw_conf)
             conf_obj = pred_conf[obj_mask].mean()
