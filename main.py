@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+from ptflops import get_model_complexity_info
 
 from dataloader.DUODataset import DUODataset, collate_fn
 from torch.utils.data import DataLoader
@@ -13,6 +14,17 @@ from utils.utils import seed_torch
 from train import train
 from val import val
 from test import test
+
+def compute_flops_and_params(model, input_res=(3, 224, 224)):
+    model.eval()
+    with torch.no_grad():
+        macs, params = get_model_complexity_info(
+            model, input_res, as_strings=True,
+            print_per_layer_stat=False, verbose=False
+        )
+    print(f"Model FLOPs: {macs}")
+    print(f"Model Params: {params}")
+    return macs, params
 
 if __name__ == "__main__":
     opt = Opt().parse()
@@ -62,6 +74,10 @@ if __name__ == "__main__":
     best_mAP = 0
     torch.manual_seed(opt.manual_seed)
     model = select_model(opt)
+    model = model.to(opt.device)
+
+    # Hitung FLOPs dan Params (input size disesuaikan dengan opt.image_size)
+    compute_flops_and_params(model, input_res=(3, opt.image_size, opt.image_size))
 
     if opt.optimizer == 'Adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
@@ -83,8 +99,6 @@ if __name__ == "__main__":
 
     if torch.cuda.device_count() > 1:
         model = nn.DataParallel(model)
-
-    model = model.to(opt.device)
 
     if opt.test:
         test_dataset = DUODataset(
