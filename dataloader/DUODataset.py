@@ -9,8 +9,7 @@ from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
 
 
 class DUODataset(torch.utils.data.Dataset):
-    CLASSES_NAME = (
-        "holothurian-seeweed", "echinus", "holothurian", "scallop", "starfish"
+    CLASSES_NAME = ("echinus", "holothurian", "scallop", "starfish"
     )
 
     def __init__(self, root_dir, annotation_file, image_folder='/kaggle/working/YOLO_Underwater/data/image_folder',

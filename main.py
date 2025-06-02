@@ -37,7 +37,6 @@ if __name__ == "__main__":
         os.makedirs(os.path.dirname(opt.classname_path), exist_ok=True)
         with open(opt.classname_path, 'w') as f:
             f.write('\n'.join([
-                "holothurian-seeweed",
                 "echinus",
                 "holothurian",
                 "scallop",
