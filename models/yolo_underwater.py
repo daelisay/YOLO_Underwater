@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .basic_layers import conv1x1, conv3x3, EP, PEP, FCA, YOLOLayer
+from .basic_layers import conv1x1, conv3x3, EP, PEP, FCA, YOLOLayer, SEBlock
 from .ghost_module import GhostModule, GhostBottleneck, CheapOps, Mix
 from .preprocessing_module import Preprocessing
 
@@ -24,23 +24,34 @@ class YOLO_Underwater(nn.Module):
             self.preprocessing = Preprocessing(input_channels=3)
 
         self.conv1 = conv3x3(3, 16, stride=1)
+        self.se1 = SEBlock(16)  # SE after conv1
+
         self.conv2 = GhostModule(16, 32, ratio=2, kernel_size=3, stride=2)
+        self.se2 = SEBlock(32)  # SE after conv2
+
         self.pep1 = GhostBottleneck(32, 32, 32, se_ratio=0.25, ghost_ratio=2)
         self.ep1 = GhostModule(32, 64, ratio=2, stride=2)
+        self.se3 = SEBlock(64)  # SE after ep1
+
         self.pep3 = GhostBottleneck(64, 96, 64, se_ratio=0.25, ghost_ratio=2)
         self.ep2 = GhostBottleneck(64, 160, 128, se_ratio=0, ghost_ratio=2, stride=2)
         self.pep6 = GhostBottleneck(128, 192, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
+        self.se4 = SEBlock(128)  # SE after pep6
+
         self.ep3 = GhostBottleneck(128, 384, 128, se_ratio=0, ghost_ratio=2, stride=2)
         self.pep9 = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
         self.pep12 = GhostBottleneck(128, 768, 128, se_ratio=0, ghost_ratio=2, stride=1)
         self.chp_op1 = CheapOps(128, 128)
         self.mix1 = Mix(inp=256, oup=128)
+
         self.ep4 = GhostBottleneck(256, 768, 128, se_ratio=0, ghost_ratio=2, stride=2)
         self.pep17 = GhostBottleneck(128, 1024, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
         self.conv5 = GhostBottleneck(128, 1024, 128, se_ratio=0, ghost_ratio=2, stride=1)
         self.chp_op2 = CheapOps(128, 128)
         self.mix2 = Mix(inp=256, oup=128)
         self.conv6 = conv1x1(256, 128, stride=1)
+        self.se5 = SEBlock(128)  # SE after conv6
+
         self.pep19 = GhostBottleneck(384, 768, 256, se_ratio=0, ghost_ratio=2, stride=1)
         self.conv7 = conv1x1(256, 128, stride=1)
         self.conv8 = conv1x1(128, 64, stride=1)
@@ -51,12 +62,14 @@ class YOLO_Underwater(nn.Module):
         self.conv9_iou = conv1x1(128, self.num_anchors, stride=1, bn=False)
         self.conv9_cls = conv1x1(128, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer52 = YOLOLayer(anchors52, num_classes, img_dim=image_size)
+
         self.ep6_reg_iou = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2, stride=1)
         self.ep6_cls = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2, stride=1)
         self.conv10_reg = conv1x1(256, 4 * self.num_anchors, stride=1, bn=False)
         self.conv10_iou = conv1x1(256, self.num_anchors, stride=1, bn=False)
         self.conv10_cls = conv1x1(256, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer26 = YOLOLayer(anchors26, num_classes, img_dim=image_size)
+
         self.ep7_reg_iou = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2, stride=1)
         self.ep7_cls = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2, stride=1)
         self.conv11_reg = conv1x1(512, 4 * self.num_anchors, stride=1, bn=False)
@@ -69,34 +82,50 @@ class YOLO_Underwater(nn.Module):
         loss = 0
         yolo_outputs = []
         image_size = x.size(2)
+
         if self.use_preprocessing:
             x = self.preprocessing(x)
+
         out = self.conv1(x)
+        out = self.se1(out)    # SE block after conv1
+
         out = self.conv2(out)
+        out = self.se2(out)    # SE block after conv2
+
         out = self.pep1(out)
         out = self.ep1(out)
+        out = self.se3(out)    # SE block after ep1
+
         out = self.pep3(out)
         out = self.ep2(out)
         out_pep6 = self.pep6(out)
+        out_pep6 = self.se4(out_pep6)   # SE block after pep6
+
         out_ep3 = self.ep3(out_pep6)
         out_pep9 = self.pep9(out_ep3)
         out_pep12 = self.pep12(out_pep9)
         chp_op1 = self.chp_op1(out_ep3)
         mix1 = self.mix1(blocks=[out_pep9, out_pep12], target=chp_op1)
         cat_1 = torch.cat([out_pep12, mix1], dim=1)
+
         ep4 = self.ep4(cat_1)
         pep17 = self.pep17(ep4)
         out_conv5 = self.conv5(pep17)
-        chp_op2 = self.chp_op2(ep4)  # diperbaiki jadi chp_op2
-        mix2 = self.mix2(blocks=[pep17, out_conv5], target=chp_op2)  # diperbaiki jadi mix2
+        chp_op2 = self.chp_op2(ep4)
+        mix2 = self.mix2(blocks=[pep17, out_conv5], target=chp_op2)
         cat_2 = torch.cat([out_conv5, mix2], dim=1)
+
         out = F.interpolate(self.conv6(cat_2), scale_factor=2)
+        out = self.se5(out)    # SE block after conv6
+
         out = torch.cat([out, cat_1], dim=1)
         out = self.pep19(out)
+
         out_conv7 = self.conv7(out)
         out = F.interpolate(self.conv8(out_conv7), scale_factor=2)
         out = torch.cat([out, out_pep6], dim=1)
         out = self.pep20(out)
+
         out_reg_iou = self.pep22_reg_iou(out)
         out_cls = self.pep22_cls(out)
         out_conv9_reg = self.conv9_reg(out_reg_iou)
@@ -106,6 +135,7 @@ class YOLO_Underwater(nn.Module):
         temp, layer_loss = self.yolo_layer52(out_conv9, targets, indexes, image_size)
         loss += layer_loss
         yolo_outputs.append(temp)
+
         out_reg_iou = self.ep6_reg_iou(out_conv7)
         out_cls = self.ep6_cls(out_conv7)
         out_conv10_reg = self.conv10_reg(out_reg_iou)
@@ -115,6 +145,7 @@ class YOLO_Underwater(nn.Module):
         temp, layer_loss = self.yolo_layer26(out_conv10, targets, indexes, image_size)
         loss += layer_loss
         yolo_outputs.append(temp)
+
         out_reg_iou = self.ep7_reg_iou(cat_2)
         out_cls = self.ep7_cls(cat_2)
         out_conv11_reg = self.conv11_reg(out_reg_iou)
@@ -124,6 +155,7 @@ class YOLO_Underwater(nn.Module):
         temp, layer_loss = self.yolo_layer13(out_conv11, targets, indexes, image_size)
         loss += layer_loss
         yolo_outputs.append(temp)
+
         yolo_outputs = torch.cat(yolo_outputs, 1)
         return yolo_outputs if targets is None else (loss, yolo_outputs)
 
