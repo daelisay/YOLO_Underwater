@@ -18,7 +18,7 @@ class Opt():
 		self.parser.add_argument("--cache", action="store_true", help="if true, cache the dataset", default=False)
 		self.parser.add_argument("--pretrain", action="store_true", help="if true, do not load optimizer", default=False)
 
-		self.parser.add_argument("--classname_path", type=str, default="data/duo.names",
+		self.parser.add_argument("--classname_path", type=str, default="/kaggle/working/YOLO_Underwater/data/duo.names",
 								 help="file path of classnames for visualizer")
 		self.parser.add_argument("--checkpoint_path", type=str, default="checkpoints",
 								 help="directory path of checkpoints")
