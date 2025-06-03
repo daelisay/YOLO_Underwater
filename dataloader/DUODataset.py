@@ -168,3 +168,22 @@ def collate_fn(batch):
         return None, None, None
     images, targets, indexes = zip(*batch)
     return torch.stack(images), torch.cat(targets, 0), torch.stack(indexes)
+
+if __name__ == '__main__':
+    import os
+    # Gunakan default dataset_path sesuai opts.py, sesuaikan jika kamu pakai environment lain
+    root_dir = '/kaggle/working/YOLO_Underwater/data'  
+    annotation_file = os.path.join(root_dir, 'train_vixed.json')  # Pastikan nama file anotasi benar
+
+    dataset = DUODataset(root_dir=root_dir, annotation_file=annotation_file,
+                         split='train', use_augmentation=False)
+    img_tensor, targets, index = dataset[0]
+
+    print("Image tensor shape:", img_tensor.shape)
+    print("Targets:", targets)
+    print("Index:", index)
+
+    img_np = (img_tensor.numpy() * 255).astype(np.uint8).transpose(1, 2, 0)
+    import cv2
+    cv2.imshow('test image', img_np)
+    cv2.waitKey(0)
