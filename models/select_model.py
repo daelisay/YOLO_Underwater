@@ -18,7 +18,7 @@ def select_model(opt):
     elif opt.model == 'YOLOV3':
         from models.darknet_model import Darknet_model
         model = Darknet_model(
-            cfg_file='./models/cfg/yolov3.cfg', input_size=opt.image_size, class_num=opt.num_classes)
+            cfg_file='./kaggle/working/YOLO_Underwater/models/cfg/yolov3.cfg', input_size=opt.image_size, class_num=opt.num_classes)
     elif opt.model == 'YOLOV3-Tiny':
         from models.darknet_model import Darknet_model
         model = Darknet_model(
