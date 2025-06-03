@@ -29,7 +29,7 @@ def compute_flops_and_params(model, input_res=(3, 224, 224)):
 if __name__ == "__main__":
     opt = Opt().parse()
     opt.device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
-    opt.num_classes = 5
+    opt.num_classes = 4
     opt.num_threads = min(opt.num_threads, 4)  # Limit workers for Kaggle
     seed_torch(opt.manual_seed)
 
