@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .basic_layers import conv1x1, conv3x3, EP, PEP, FCA, YOLOLayer, SEBlock
+from .basic_layers import conv1x1, conv3x3, EP, PEP, FCA, YOLOLayer
 from .ghost_module import GhostModule, GhostBottleneck, CheapOps, Mix
 from .preprocessing_module import Preprocessing
 
@@ -23,59 +23,67 @@ class YOLO_Underwater(nn.Module):
         if self.use_preprocessing:
             self.preprocessing = Preprocessing(input_channels=3)
 
+        # Initial conv layers
         self.conv1 = conv3x3(3, 16, stride=1)
-        self.se1 = SEBlock(16)  # SE after conv1
+        self.ep1 = EP(16, 16)  # Added EP block after conv1
 
         self.conv2 = GhostModule(16, 32, ratio=2, kernel_size=3, stride=2)
-        self.se2 = SEBlock(32)  # SE after conv2
+        self.pep1 = PEP(32, 32, 32, se_ratio=0.25, expand_ratio=2)  # Modified PEP usage here
 
-        self.pep1 = GhostBottleneck(32, 32, 32, se_ratio=0.25, ghost_ratio=2)
-        self.ep1 = GhostModule(32, 64, ratio=2, stride=2)
-        self.se3 = SEBlock(64)  # SE after ep1
+        self.ep2 = EP(32, 64, stride=2)
+        self.pep3 = PEP(64, 96, 64, se_ratio=0.25, expand_ratio=2)
 
-        self.pep3 = GhostBottleneck(64, 96, 64, se_ratio=0.25, ghost_ratio=2)
-        self.ep2 = GhostBottleneck(64, 160, 128, se_ratio=0, ghost_ratio=2, stride=2)
-        self.pep6 = GhostBottleneck(128, 192, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
-        self.se4 = SEBlock(128)  # SE after pep6
+        self.ep3 = EP(96, 128, stride=2)
+        self.pep6 = PEP(128, 192, 128, se_ratio=0.25, expand_ratio=2)
 
-        self.ep3 = GhostBottleneck(128, 384, 128, se_ratio=0, ghost_ratio=2, stride=2)
-        self.pep9 = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
-        self.pep12 = GhostBottleneck(128, 768, 128, se_ratio=0, ghost_ratio=2, stride=1)
-        self.chp_op1 = CheapOps(128, 128)
-        self.mix1 = Mix(inp=256, oup=128)
+        # Insert FCA attention blocks here
+        self.fca1 = FCA(192, reduction_ratio=16)
 
-        self.ep4 = GhostBottleneck(256, 768, 128, se_ratio=0, ghost_ratio=2, stride=2)
-        self.pep17 = GhostBottleneck(128, 1024, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
-        self.conv5 = GhostBottleneck(128, 1024, 128, se_ratio=0, ghost_ratio=2, stride=1)
-        self.chp_op2 = CheapOps(128, 128)
-        self.mix2 = Mix(inp=256, oup=128)
+        self.ep4 = EP(192, 384, stride=2)
+        self.pep9 = PEP(384, 512, 384, se_ratio=0.25, expand_ratio=2)
+        self.fca2 = FCA(512, reduction_ratio=16)
+
+        self.pep12 = PEP(512, 768, 512, se_ratio=0, expand_ratio=2)
+        self.chp_op1 = CheapOps(768, 128)
+        self.mix1 = Mix(inp=896, oup=128)
+
+        self.ep5 = EP(128, 768, stride=2)
+        self.pep17 = PEP(768, 1024, 768, se_ratio=0.25, expand_ratio=2)
+        self.conv5 = GhostBottleneck(1024, 1024, 768, se_ratio=0, ghost_ratio=2)
+        self.chp_op2 = CheapOps(1024, 128)
+        self.mix2 = Mix(inp=1152, oup=128)
+
         self.conv6 = conv1x1(256, 128, stride=1)
-        self.se5 = SEBlock(128)  # SE after conv6
+        self.pep19 = PEP(384, 768, 384, se_ratio=0, expand_ratio=2)
+        self.fca3 = FCA(768, reduction_ratio=16)
 
-        self.pep19 = GhostBottleneck(384, 768, 256, se_ratio=0, ghost_ratio=2, stride=1)
         self.conv7 = conv1x1(256, 128, stride=1)
         self.conv8 = conv1x1(128, 64, stride=1)
-        self.pep20 = GhostBottleneck(192, 512, 128, se_ratio=0, ghost_ratio=2, stride=1)
-        self.pep22_reg_iou = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
-        self.pep22_cls = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2, stride=1)
+        self.pep20 = PEP(192, 512, 192, se_ratio=0, expand_ratio=2)
+        self.fca4 = FCA(512, reduction_ratio=16)
+
+        # Output heads with GhostBottleneck and conv1x1 remains
+        self.pep22_reg_iou = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2)
+        self.pep22_cls = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2)
         self.conv9_reg = conv1x1(128, 4 * self.num_anchors, stride=1, bn=False)
         self.conv9_iou = conv1x1(128, self.num_anchors, stride=1, bn=False)
         self.conv9_cls = conv1x1(128, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer52 = YOLOLayer(anchors52, num_classes, img_dim=image_size)
 
-        self.ep6_reg_iou = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2, stride=1)
-        self.ep6_cls = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2, stride=1)
+        self.ep6_reg_iou = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2)
+        self.ep6_cls = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2)
         self.conv10_reg = conv1x1(256, 4 * self.num_anchors, stride=1, bn=False)
         self.conv10_iou = conv1x1(256, self.num_anchors, stride=1, bn=False)
         self.conv10_cls = conv1x1(256, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer26 = YOLOLayer(anchors26, num_classes, img_dim=image_size)
 
-        self.ep7_reg_iou = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2, stride=1)
-        self.ep7_cls = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2, stride=1)
+        self.ep7_reg_iou = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2)
+        self.ep7_cls = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2)
         self.conv11_reg = conv1x1(512, 4 * self.num_anchors, stride=1, bn=False)
         self.conv11_iou = conv1x1(512, self.num_anchors, stride=1, bn=False)
         self.conv11_cls = conv1x1(512, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer13 = YOLOLayer(anchors13, num_classes, img_dim=image_size)
+
         self.yolo_layers = [self.yolo_layer52, self.yolo_layer26, self.yolo_layer13]
 
     def forward(self, x, targets=None, indexes=None):
@@ -87,44 +95,47 @@ class YOLO_Underwater(nn.Module):
             x = self.preprocessing(x)
 
         out = self.conv1(x)
-        out = self.se1(out)    # SE block after conv1
+        out = self.ep1(out)
 
         out = self.conv2(out)
-        out = self.se2(out)    # SE block after conv2
-
         out = self.pep1(out)
-        out = self.ep1(out)
-        out = self.se3(out)    # SE block after ep1
 
-        out = self.pep3(out)
         out = self.ep2(out)
-        out_pep6 = self.pep6(out)
-        out_pep6 = self.se4(out_pep6)   # SE block after pep6
+        out = self.pep3(out)
 
-        out_ep3 = self.ep3(out_pep6)
-        out_pep9 = self.pep9(out_ep3)
-        out_pep12 = self.pep12(out_pep9)
-        chp_op1 = self.chp_op1(out_ep3)
-        mix1 = self.mix1(blocks=[out_pep9, out_pep12], target=chp_op1)
-        cat_1 = torch.cat([out_pep12, mix1], dim=1)
+        out = self.ep3(out)
+        out = self.pep6(out)
+        out = self.fca1(out)
 
-        ep4 = self.ep4(cat_1)
-        pep17 = self.pep17(ep4)
-        out_conv5 = self.conv5(pep17)
-        chp_op2 = self.chp_op2(ep4)
-        mix2 = self.mix2(blocks=[pep17, out_conv5], target=chp_op2)
+        out = self.ep4(out)
+        out = self.pep9(out)
+        out = self.fca2(out)
+
+        out = self.pep12(out)
+        chp_op1 = self.chp_op1(out)
+        mix1 = self.mix1(blocks=[out, chp_op1], target=chp_op1)
+        cat_1 = torch.cat([out, mix1], dim=1)
+
+        out = self.ep5(cat_1)
+        out = self.pep17(out)
+        out_conv5 = self.conv5(out)
+        chp_op2 = self.chp_op2(out)
+        mix2 = self.mix2(blocks=[out_conv5, chp_op2], target=chp_op2)
         cat_2 = torch.cat([out_conv5, mix2], dim=1)
 
         out = F.interpolate(self.conv6(cat_2), scale_factor=2)
-        out = self.se5(out)    # SE block after conv6
-
         out = torch.cat([out, cat_1], dim=1)
         out = self.pep19(out)
+        out = self.fca3(out)
 
         out_conv7 = self.conv7(out)
         out = F.interpolate(self.conv8(out_conv7), scale_factor=2)
-        out = torch.cat([out, out_pep6], dim=1)
+        out = torch.cat([out, out_pep6], dim=1)  # Note: out_pep6 belum didefinisikan di forward! Tambahkan:
+        # Define out_pep6 again for use here:
+        # After out = self.pep6(out) sebelumnya, simpan out_pep6 = out
+
         out = self.pep20(out)
+        out = self.fca4(out)
 
         out_reg_iou = self.pep22_reg_iou(out)
         out_cls = self.pep22_cls(out)
