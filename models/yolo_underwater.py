@@ -23,67 +23,51 @@ class YOLO_Underwater(nn.Module):
         if self.use_preprocessing:
             self.preprocessing = Preprocessing(input_channels=3)
 
-        # Initial conv layers
         self.conv1 = conv3x3(3, 16, stride=1)
-        self.ep1 = EP(16, 16)  # Added EP block after conv1
-
+        self.ep1 = EP(16, 16)  # contoh EP modul
         self.conv2 = GhostModule(16, 32, ratio=2, kernel_size=3, stride=2)
-        self.pep1 = PEP(32, 32, 32, se_ratio=0.25, expand_ratio=2)  # Modified PEP usage here
-
+        self.pep1 = PEP(32, 32, 32, se_ratio=0.25, ghost_ratio=2)
         self.ep2 = EP(32, 64, stride=2)
-        self.pep3 = PEP(64, 96, 64, se_ratio=0.25, expand_ratio=2)
-
-        self.ep3 = EP(96, 128, stride=2)
-        self.pep6 = PEP(128, 192, 128, se_ratio=0.25, expand_ratio=2)
-
-        # Insert FCA attention blocks here
+        self.pep3 = PEP(64, 96, 64, se_ratio=0.25, ghost_ratio=2)
+        self.ep3 = EP(64, 128, stride=2)
+        self.pep6 = PEP(128, 192, 128, se_ratio=0.25, ghost_ratio=2)
         self.fca1 = FCA(192, reduction_ratio=16)
-
-        self.ep4 = EP(192, 384, stride=2)
-        self.pep9 = PEP(384, 512, 384, se_ratio=0.25, expand_ratio=2)
+        self.ep4 = EP(192, 256, stride=2)
+        self.pep9 = PEP(256, 512, 256, se_ratio=0.25, ghost_ratio=2)
         self.fca2 = FCA(512, reduction_ratio=16)
-
-        self.pep12 = PEP(512, 768, 512, se_ratio=0, expand_ratio=2)
+        self.pep12 = PEP(512, 768, 512, se_ratio=0)
         self.chp_op1 = CheapOps(768, 128)
-        self.mix1 = Mix(inp=896, oup=128)
-
-        self.ep5 = EP(128, 768, stride=2)
-        self.pep17 = PEP(768, 1024, 768, se_ratio=0.25, expand_ratio=2)
-        self.conv5 = GhostBottleneck(1024, 1024, 768, se_ratio=0, ghost_ratio=2)
+        self.mix1 = Mix(inp=896, oup=128)  # 768 + 128
+        self.ep5 = EP(128, 128)
+        self.pep17 = PEP(128, 1024, 128, se_ratio=0.25, ghost_ratio=2)
+        self.conv5 = GhostBottleneck(128, 1024, 128, se_ratio=0, ghost_ratio=2, stride=1)
         self.chp_op2 = CheapOps(1024, 128)
-        self.mix2 = Mix(inp=1152, oup=128)
-
+        self.mix2 = Mix(inp=1152, oup=128)  # 1024 + 128
         self.conv6 = conv1x1(256, 128, stride=1)
-        self.pep19 = PEP(384, 768, 384, se_ratio=0, expand_ratio=2)
+        self.pep19 = PEP(384, 768, 256)
         self.fca3 = FCA(768, reduction_ratio=16)
-
         self.conv7 = conv1x1(256, 128, stride=1)
         self.conv8 = conv1x1(128, 64, stride=1)
-        self.pep20 = PEP(192, 512, 192, se_ratio=0, expand_ratio=2)
+        self.pep20 = PEP(192, 512, 128)
         self.fca4 = FCA(512, reduction_ratio=16)
-
-        # Output heads with GhostBottleneck and conv1x1 remains
-        self.pep22_reg_iou = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2)
-        self.pep22_cls = GhostBottleneck(128, 512, 128, se_ratio=0.25, ghost_ratio=2)
+        self.pep22_reg_iou = PEP(128, 512, 128, se_ratio=0.25, ghost_ratio=2)
+        self.pep22_cls = PEP(128, 512, 128, se_ratio=0.25, ghost_ratio=2)
         self.conv9_reg = conv1x1(128, 4 * self.num_anchors, stride=1, bn=False)
         self.conv9_iou = conv1x1(128, self.num_anchors, stride=1, bn=False)
         self.conv9_cls = conv1x1(128, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer52 = YOLOLayer(anchors52, num_classes, img_dim=image_size)
-
-        self.ep6_reg_iou = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2)
-        self.ep6_cls = GhostBottleneck(128, 768, 256, se_ratio=0, ghost_ratio=2)
+        self.ep6_reg_iou = EP(128, 768, stride=1)
+        self.ep6_cls = EP(128, 768, stride=1)
         self.conv10_reg = conv1x1(256, 4 * self.num_anchors, stride=1, bn=False)
         self.conv10_iou = conv1x1(256, self.num_anchors, stride=1, bn=False)
         self.conv10_cls = conv1x1(256, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer26 = YOLOLayer(anchors26, num_classes, img_dim=image_size)
-
-        self.ep7_reg_iou = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2)
-        self.ep7_cls = GhostBottleneck(256, 1024, 512, se_ratio=0, ghost_ratio=2)
+        self.ep7_reg_iou = EP(256, 1024, stride=1)
+        self.ep7_cls = EP(256, 1024, stride=1)
         self.conv11_reg = conv1x1(512, 4 * self.num_anchors, stride=1, bn=False)
         self.conv11_iou = conv1x1(512, self.num_anchors, stride=1, bn=False)
         self.conv11_cls = conv1x1(512, self.num_classes * self.num_anchors, stride=1, bn=False)
         self.yolo_layer13 = YOLOLayer(anchors13, num_classes, img_dim=image_size)
-
         self.yolo_layers = [self.yolo_layer52, self.yolo_layer26, self.yolo_layer13]
 
     def forward(self, x, targets=None, indexes=None):
@@ -96,21 +80,18 @@ class YOLO_Underwater(nn.Module):
 
         out = self.conv1(x)
         out = self.ep1(out)
-
         out = self.conv2(out)
         out = self.pep1(out)
-
         out = self.ep2(out)
         out = self.pep3(out)
-
         out = self.ep3(out)
         out = self.pep6(out)
-        out = self.fca1(out)
+        out_pep6 = out  # Simpan output dari pep6 untuk nanti di concat
 
+        out = self.fca1(out)
         out = self.ep4(out)
         out = self.pep9(out)
         out = self.fca2(out)
-
         out = self.pep12(out)
         chp_op1 = self.chp_op1(out)
         mix1 = self.mix1(blocks=[out, chp_op1], target=chp_op1)
@@ -130,10 +111,7 @@ class YOLO_Underwater(nn.Module):
 
         out_conv7 = self.conv7(out)
         out = F.interpolate(self.conv8(out_conv7), scale_factor=2)
-        out = torch.cat([out, out_pep6], dim=1)  # Note: out_pep6 belum didefinisikan di forward! Tambahkan:
-        # Define out_pep6 again for use here:
-        # After out = self.pep6(out) sebelumnya, simpan out_pep6 = out
-
+        out = torch.cat([out, out_pep6], dim=1)  # Menggunakan out_pep6 yang sudah disimpan
         out = self.pep20(out)
         out = self.fca4(out)
 
