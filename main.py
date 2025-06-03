@@ -47,7 +47,7 @@ if __name__ == "__main__":
     if not opt.no_train:
         train_dataset = DUODataset(
             root_dir=opt.dataset_path,
-            annotation_file=os.path.join(opt.dataset_path, "train.json"),
+            annotation_file=os.path.join(opt.dataset_path, "train_fixed.json"),
             image_folder='image_folder',
             split='train', image_size=opt.image_size,
             use_augmentation=True, box_type='yolo',
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     if not opt.no_val:
         val_dataset = DUODataset(
             root_dir=opt.dataset_path,
-            annotation_file=os.path.join(opt.dataset_path, "val.json"),
+            annotation_file=os.path.join(opt.dataset_path, "val_fixed.json"),
             image_folder='image_folder',
             split='val', image_size=opt.image_size,
             use_augmentation=False, box_type='yolo',
@@ -102,7 +102,7 @@ if __name__ == "__main__":
     if opt.test:
         test_dataset = DUODataset(
             root_dir=opt.dataset_path,
-            annotation_file=os.path.join(opt.dataset_path, "test.json"),
+            annotation_file=os.path.join(opt.dataset_path, "test_fixed.json"),
             image_folder='image_folder', split='test',
             image_size=opt.image_size, use_augmentation=False,
             box_type='yolo', preprocessing=opt.preprocessing)
