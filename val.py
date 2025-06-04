@@ -17,10 +17,10 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     ngpu = torch.cuda.device_count() if device.type == 'cuda' else 1
 
     labels = []
-    sample_matrics = []
+    sample_matrics = []  # Initialize sample_matrics here
     total_loss = []
 
-    coco = COCO(os.path.join(opt.dataset_path, "val_fixed.json"))
+    coco = COCO(os.path.join(opt.dataset_path, "annotations", f"val_fixed.json"))
     coco_dt = []
 
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
@@ -35,32 +35,26 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
 
         loss, detections = model(images, rep_targets, indexes)
 
-        if ngpu > 1:
-            loss = loss.sum()
-        total_loss.append(loss.item())
+        # Skip this batch if detections are empty
+        if detections is None or len(detections) == 0:
+            continue
 
         detections = non_max_suppression(detections, opt.conf_thresh, opt.nms_thresh)
 
-        if len(targets) == 0:
+        # Skip if no valid detections after NMS
+        if detections is None or len(detections) == 0:
             continue
 
-        labels += targets[:, 1].tolist()
-        targets[:, 2:] = xywh2xyxy(targets[:, 2:])
-        targets[:, 2:] *= opt.image_size
+        # Populate sample_matrics only if detections are valid
+        sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
 
-        # Prepare for COCOeval
-        for det in detections:
-            for box in det:
-                x1, y1, x2, y2, conf, cls = box[:6]
-                for idx in indexes:  # Iterate over the batch of indexes
-                    coco_dt.append({
-                        "image_id": idx.item(),  # Convert index to scalar for each image in the batch
-                        "category_id": int(cls),
-                        "bbox": [x1, y1, x2 - x1, y2 - y1],
-                        "score": conf.item()
-                    })
+    # Ensure sample_matrics has enough data before unpacking
+    if len(sample_matrics) > 0:
+        true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
+    else:
+        print("Warning: No valid detections to compute metrics.")
+        return best_mAP  # Skip evaluation if no detections
 
-    true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
     precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels)
 
     # COCOeval
