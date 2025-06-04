@@ -2,11 +2,9 @@ import os
 import numpy as np
 import torch
 from terminaltables import AsciiTable
-
 from tqdm import tqdm
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-
 from utils.stats import (
     non_max_suppression, xywh2xyxy,
     get_batch_statistics, ap_per_class, load_classe_names
@@ -21,8 +19,8 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     labels = []
     sample_matrics = []
     total_loss = []
-    
-    coco = COCO(os.path.join(opt.dataset_path, f"val_fixed.json"))
+
+    coco = COCO(os.path.join(opt.dataset_path, "annotations", f"val_fixed.json"))
     coco_dt = []
 
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
@@ -50,18 +48,17 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
         targets[:, 2:] = xywh2xyxy(targets[:, 2:])
         targets[:, 2:] *= opt.image_size
 
-        sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
-
         # Prepare for COCOeval
         for det in detections:
             for box in det:
                 x1, y1, x2, y2, conf, cls = box[:6]
-                coco_dt.append({
-                    "image_id": indexes.item(),
-                    "category_id": int(cls),
-                    "bbox": [x1, y1, x2 - x1, y2 - y1],
-                    "score": conf.item()
-                })
+                for idx in indexes:  # Iterate over the batch of indexes
+                    coco_dt.append({
+                        "image_id": idx.item(),  # Convert index to scalar for each image in the batch
+                        "category_id": int(cls),
+                        "bbox": [x1, y1, x2 - x1, y2 - y1],
+                        "score": conf.item()
+                    })
 
     true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
     precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels)
@@ -107,7 +104,7 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     val_logger.print_and_write(f'{metric_table.table}\n')
 
     if best_mAP < AP.mean():
-        save_file_path = os.path.join(opt.checkpoint_path, 'best.pt')  # Change .pth to .pt
+        save_file_path = os.path.join(opt.checkpoint_path, 'best.pt')  # Save as .pt file
         states = {
             'epoch': epoch + 1,
             'model': opt.model,
@@ -116,9 +113,8 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
             'scheduler': scheduler.state_dict(),
             'best_mAP': best_mAP,
         }
-        torch.save(states, save_file_path)  # Save the best model as .pt
+        torch.save(states, save_file_path)  # Save best model as .pt
         best_mAP = AP.mean()
-
 
     print("current best mAP:" + str(best_mAP))
 
