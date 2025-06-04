@@ -20,7 +20,7 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     sample_matrics = []
     total_loss = []
 
-    coco = COCO(os.path.join(opt.dataset_path, "annotations", f"val_fixed.json"))
+    coco = COCO(os.path.join(opt.dataset_path, "val_fixed.json"))
     coco_dt = []
 
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
