@@ -69,13 +69,13 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
         title='[Epoch {:d}/{:d}]'.format(epoch, opt.num_epochs)
     )
 
-    # Log the AP values for each IoU threshold
+    # Log the AP values for each IoU threshold (mAP50, mAP75)
     for key, value in ap_per_iou.items():
         # Only log if the value is not None
         if value is not None:
             metric_table_data.append([key, value])
 
-    # Log the AP values for different object sizes
+    # Log the AP values for different object sizes (mAPsmall, mAPmedium, mAPlarge)
     for key, value in ap_per_size.items():
         # Only log if the value is not None
         if value is not None:
@@ -84,22 +84,23 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     metric_table.table_data = metric_table_data
     val_logger.print_and_write('{}\n'.format(metric_table.table))
 
-    # Avoid comparison if mAP is None
-    if ap_per_iou.get('mAP@0.5') is not None:
-        if best_mAP < ap_per_iou['mAP@0.5']:
-            save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
-            states = {
-                'epoch': epoch + 1,
-                'model': opt.model,
-                'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
-                'best_mAP': best_mAP,
-            }
-            torch.save(states, save_file_path)
-            best_mAP = ap_per_iou['mAP@0.5']
+    # **Menyimpan checkpoint terbaik berdasarkan mAP keseluruhan**
+    # Menghitung mAP keseluruhan dari semua metrik mAP
+    overall_mAP = np.mean(list(ap_per_iou.values()) + list(ap_per_size.values()))  # Gabungkan mAP dari IoU dan size
+
+    if best_mAP < overall_mAP:
+        save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
+        states = {
+            'epoch': epoch + 1,
+            'model': opt.model,
+            'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict(),
+            'best_mAP': best_mAP,
+        }
+        torch.save(states, save_file_path)
+        best_mAP = overall_mAP
 
     print("current best mAP:" + str(best_mAP))
 
     return best_mAP
-
