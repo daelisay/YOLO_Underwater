@@ -49,16 +49,19 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
         sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
 
         # Ensure coco_dt is populated with valid detections
-        for det in detections[0]:
-            # Assuming det format is [x1, y1, x2, y2, confidence, class]
-            x1, y1, x2, y2, conf, cls = det[:6]
-            result = {
-                "image_id": indexes.item(),
-                "category_id": int(cls),
-                "bbox": [x1, y1, x2 - x1, y2 - y1],
-                "score": conf.item(),
-            }
-            coco_dt.append(result)
+        for batch_i, det in enumerate(detections):
+            if det is None or len(det) == 0:
+                continue
+            image_id = int(indexes[batch_i].item())
+            for *xyxy, conf, cls in det:
+                x1, y1, x2, y2 = [float(x.cpu()) for x in xyxy]
+                coco_dt.append({
+                    "image_id": image_id,
+                    "category_id": int(cls.cpu()),
+                    "bbox": [x1, y1, x2 - x1, y2 - y1],
+                    "score": float(conf.cpu()),
+                })
+
 
     # Ensure coco_dt has enough data before passing to coco.loadRes()
     if len(coco_dt) > 0:
