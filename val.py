@@ -86,8 +86,16 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
 
     # **Menyimpan checkpoint terbaik berdasarkan mAP keseluruhan**
     # Menghitung mAP keseluruhan dari semua metrik mAP
-    overall_mAP = np.mean(list(ap_per_iou.values()) + list(ap_per_size.values()))  # Gabungkan mAP dari IoU dan size
+    # Menyaring nilai-nilai None sebelum menghitung rata-rata mAP keseluruhan
+    valid_iou_maps = [value for value in ap_per_iou.values() if value is not None]
+    valid_size_maps = [value for value in ap_per_size.values() if value is not None]
 
+    if valid_iou_maps or valid_size_maps:
+        overall_mAP = np.mean(valid_iou_maps + valid_size_maps)  # Gabungkan mAP dari IoU dan size
+    else:
+        overall_mAP = 0.0  # Set overall_mAP ke 0 jika tidak ada nilai yang valid
+
+    # Simpan checkpoint jika mAP keseluruhan lebih baik
     if best_mAP < overall_mAP:
         save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
         states = {
@@ -104,3 +112,4 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     print("current best mAP:" + str(best_mAP))
 
     return best_mAP
+
