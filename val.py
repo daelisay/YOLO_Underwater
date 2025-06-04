@@ -71,28 +71,35 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
 
     # Log the AP values for each IoU threshold
     for key, value in ap_per_iou.items():
-        metric_table_data.append([key, value])
+        # Only log if the value is not None
+        if value is not None:
+            metric_table_data.append([key, value])
 
     # Log the AP values for different object sizes
     for key, value in ap_per_size.items():
-        metric_table_data.append([key, value])
+        # Only log if the value is not None
+        if value is not None:
+            metric_table_data.append([key, value])
 
     metric_table.table_data = metric_table_data
     val_logger.print_and_write('{}\n'.format(metric_table.table))
 
-    if best_mAP < ap_per_iou['mAP@0.5']:
-        save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
-        states = {
-            'epoch': epoch + 1,
-            'model': opt.model,
-            'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-            'best_mAP': best_mAP,
-        }
-        torch.save(states, save_file_path)
-        best_mAP = ap_per_iou['mAP@0.5']
+    # Avoid comparison if mAP is None
+    if ap_per_iou.get('mAP@0.5') is not None:
+        if best_mAP < ap_per_iou['mAP@0.5']:
+            save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
+            states = {
+                'epoch': epoch + 1,
+                'model': opt.model,
+                'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
+                'best_mAP': best_mAP,
+            }
+            torch.save(states, save_file_path)
+            best_mAP = ap_per_iou['mAP@0.5']
 
     print("current best mAP:" + str(best_mAP))
 
     return best_mAP
+

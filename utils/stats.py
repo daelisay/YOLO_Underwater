@@ -101,24 +101,6 @@ def load_classe_names(classname_path):
 # 	return p, r, ap, f1, unique_classes.astype("int32")
 
 def ap_per_class(tp, conf, pred_cls, target_cls, iou_thresholds=[0.5], size_bins=[0, 32, 96, 512]):
-    """ 
-    Compute the average precision, given the recall and precision curves for different IoU thresholds and object sizes.
-
-    # Arguments:
-        tp:        True positives (list).
-        conf:      Objectness value from 0-1 (list).
-        pred_cls:  Predicted object classes (list).
-        target_cls: True object classes (list).
-        iou_thresholds: List of IoU thresholds for mAP calculation (default [0.5]).
-        size_bins: List of size bins for object sizes (default [0, 32, 96, 512]).
-
-    # Returns:
-        p: Precision for each class.
-        r: Recall for each class.
-        ap: Average Precision for each class.
-        f1: F1 score for each class.
-        unique_classes: Unique class indices.
-    """
     # Sort by objectness
     i = np.argsort(-conf)
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
@@ -136,7 +118,9 @@ def ap_per_class(tp, conf, pred_cls, target_cls, iou_thresholds=[0.5], size_bins
 
         # Skip class if no predictions or ground truth
         if n_p == 0 and n_gt == 0:
-            continue
+            ap.append(0)
+            r.append(0)
+            p.append(0)
         elif n_p == 0 or n_gt == 0:
             ap.append(0)
             r.append(0)
@@ -171,6 +155,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls, iou_thresholds=[0.5], size_bins
         ap_per_size[f"mAP_size{size_bin}"] = compute_size_based_ap(tp, conf, pred_cls, target_cls, size_bin)
 
     return p, r, ap, f1, unique_classes.astype("int32"), ap_per_iou, ap_per_size
+
 
 def compute_iou_based_ap(tp, conf, pred_cls, target_cls, iou_threshold=0.5):
     """ Compute mAP for a given IoU threshold. """
