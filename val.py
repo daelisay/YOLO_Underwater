@@ -20,7 +20,8 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     sample_matrics = []  # Initialize sample_matrics here
     total_loss = []
 
-    coco = COCO(os.path.join(opt.dataset_path, "annotations", f"val_fixed.json"))
+    # Untuk file di sistem lokal (Windows)
+    coco = COCO(os.path.join(opt.dataset_path, f"val_fixed.json"))
     coco_dt = []
 
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
