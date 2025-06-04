@@ -1,3 +1,9 @@
+import torch  # Make sure this line is included at the top
+import os
+from terminaltables import AsciiTable
+from tqdm import tqdm
+
+# Ensure that the rest of the code follows after the import
 def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=0):
     model.train()
     device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
@@ -60,4 +66,4 @@ def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=
     torch.save(state, os.path.join(opt.checkpoint_path, 'last.pt'))
 
     if epoch % opt.checkpoint_interval == 0:
-        torch.save(state, os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pt'))
+        torch.save(state, os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pt'))  # Save every epoch as .pt
