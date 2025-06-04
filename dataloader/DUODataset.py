@@ -173,7 +173,7 @@ if __name__ == '__main__':
     import os
     # Gunakan default dataset_path sesuai opts.py, sesuaikan jika kamu pakai environment lain
     root_dir = '/kaggle/working/YOLO_Underwater/data'  
-    annotation_file = os.path.join(root_dir, 'train_vixed.json')  # Pastikan nama file anotasi benar
+    annotation_file = os.path.join(root_dir, 'train_fixed.json')  # Pastikan nama file anotasi benar
 
     dataset = DUODataset(root_dir=root_dir, annotation_file=annotation_file,
                          split='train', use_augmentation=False)
@@ -187,3 +187,4 @@ if __name__ == '__main__':
     import cv2
     cv2.imshow('test image', img_np)
     cv2.waitKey(0)
+
