@@ -20,7 +20,6 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     sample_matrics = []  # Initialize sample_matrics here
     total_loss = []
 
-    # Untuk file di sistem lokal (Windows)
     coco = COCO(os.path.join(opt.dataset_path, f"val_fixed.json"))
     coco_dt = []
 
@@ -49,17 +48,25 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
         # Populate sample_matrics only if detections are valid
         sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
 
-    # Ensure sample_matrics has enough data before unpacking
-    if len(sample_matrics) > 0:
-        true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
+        # Ensure coco_dt is populated with valid detections
+        for det in detections[0]:
+            # Assuming det format is [x1, y1, x2, y2, confidence, class]
+            x1, y1, x2, y2, conf, cls = det[:6]
+            result = {
+                "image_id": indexes.item(),
+                "category_id": int(cls),
+                "bbox": [x1, y1, x2 - x1, y2 - y1],
+                "score": conf.item(),
+            }
+            coco_dt.append(result)
+
+    # Ensure coco_dt has enough data before passing to coco.loadRes()
+    if len(coco_dt) > 0:
+        coco_results = coco.loadRes(coco_dt)
     else:
         print("Warning: No valid detections to compute metrics.")
         return best_mAP  # Skip evaluation if no detections
 
-    precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels)
-
-    # COCOeval
-    coco_results = coco.loadRes(coco_dt)
     coco_eval = COCOeval(coco, coco_results, iouType="bbox")
     coco_eval.evaluate()
     coco_eval.accumulate()
