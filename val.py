@@ -17,11 +17,12 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     ngpu = torch.cuda.device_count() if device.type == 'cuda' else 1
 
     labels = []
-    sample_matrics = []
+    sample_metrics = []
     total_loss = []
 
-    coco = COCO(os.path.join(opt.dataset_path, f"val_fixed.json"))
-    coco_dt = []
+    # List of IoU thresholds and size bins
+    iou_thresholds = [0.5, 0.75]  # mAP at IoU 0.5 and IoU 0.75
+    size_bins = [0, 32, 96, 512]  # Small, Medium, Large objects
 
     for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
         images = images.to(device)
@@ -35,81 +36,52 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
 
         loss, detections = model(images, rep_targets, indexes)
 
-        # Skip this batch if detections are empty
-        if detections is None or len(detections) == 0:
-            continue
+        if ngpu > 1:
+            loss = loss.sum()
+        total_loss.append(loss.item())
 
         detections = non_max_suppression(detections, opt.conf_thresh, opt.nms_thresh)
 
-        # Skip if no valid detections after NMS
-        if detections is None or len(detections) == 0:
+        if len(targets) == 0:
             continue
 
-        # Populate sample_matrics only if detections are valid
-        sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
+        labels += targets[:, 1].tolist()
+        targets[:, 2:] = xywh2xyxy(targets[:, 2:])
+        targets[:, 2:] *= opt.image_size
 
-    # Ensure sample_matrics has enough data before unpacking
-    if len(sample_matrics) > 0:
-        true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
-    else:
-        print("Warning: No valid detections to compute metrics.")
-        return best_mAP  # Skip evaluation if no detections
+        sample_metrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
 
-    precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels)
+    true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
+    precision, recall, AP, f1, ap_class, ap_per_iou, ap_per_size = ap_per_class(true_positives, pred_scores, pred_labels, labels, iou_thresholds=iou_thresholds, size_bins=size_bins)
 
-    # COCOeval
-    coco_results = coco.loadRes(coco_dt)
-    coco_eval = COCOeval(coco, coco_results, iouType="bbox")
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
-
-    # Print the results in the same format as COCOeval
-    metrics = {
-        "precision": precision.mean(),
-        "recall": recall.mean(),
-        "f1": f1.mean(),
-        "mAP": AP.mean(),
-        "loss": np.array(total_loss).mean(),
-    }
-
-    # mAP50, mAP75, mAPsmall, mAPmedium, mAPlarge
-    mAP50 = coco_eval.stats[0]  # mAP at IoU=0.50
-    mAP75 = coco_eval.stats[1]  # mAP at IoU=0.75
-    mAPsmall = coco_eval.stats[3]  # mAP at small objects
-    mAPmedium = coco_eval.stats[4]  # mAP at medium objects
-    mAPlarge = coco_eval.stats[5]  # mAP at large objects
-
-    print(f"mAP50: {mAP50:.3f}, mAP75: {mAP75:.3f}, mAPsmall: {mAPsmall:.3f}, mAPmedium: {mAPmedium:.3f}, mAPlarge: {mAPlarge:.3f}")
-
+    # Log the metrics
     metric_table_data = [
-        ['Metrics', 'Value'],
-        ['precision', precision.mean()],
+        ['Metrics', 'Value'], 
+        ['precision', precision.mean()], 
         ['recall', recall.mean()],
-        ['f1', f1.mean()],
-        ['mAP', AP.mean()],
-        ['mAP50', mAP50],
-        ['mAP75', mAP75],
-        ['mAPsmall', mAPsmall],
-        ['mAPmedium', mAPmedium],
-        ['mAPlarge', mAPlarge],
+        ['f1', f1.mean()], 
+        ['mAP', AP.mean()], 
         ['loss', np.array(total_loss).mean()]
     ]
 
-    # Print detailed class-wise AP
-    class_names = load_classe_names(opt.classname_path)
-    for i, c in enumerate(ap_class):
-        metric_table_data += [['AP-{}'.format(class_names[c]), AP[i]]]
-    
     metric_table = AsciiTable(
         metric_table_data,
         title='[Epoch {:d}/{:d}]'.format(epoch, opt.num_epochs)
     )
 
-    val_logger.print_and_write(f'{metric_table.table}\n')
+    # Log the AP values for each IoU threshold
+    for key, value in ap_per_iou.items():
+        metric_table_data.append([key, value])
 
-    if best_mAP < AP.mean():
-        save_file_path = os.path.join(opt.checkpoint_path, 'best.pt')  # Save as .pt file
+    # Log the AP values for different object sizes
+    for key, value in ap_per_size.items():
+        metric_table_data.append([key, value])
+
+    metric_table.table_data = metric_table_data
+    val_logger.print_and_write('{}\n'.format(metric_table.table))
+
+    if best_mAP < ap_per_iou['mAP@0.5']:
+        save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
         states = {
             'epoch': epoch + 1,
             'model': opt.model,
@@ -118,8 +90,8 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
             'scheduler': scheduler.state_dict(),
             'best_mAP': best_mAP,
         }
-        torch.save(states, save_file_path)  # Save best model as .pt
-        best_mAP = AP.mean()
+        torch.save(states, save_file_path)
+        best_mAP = ap_per_iou['mAP@0.5']
 
     print("current best mAP:" + str(best_mAP))
 

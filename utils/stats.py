@@ -44,61 +44,149 @@ def load_classe_names(classname_path):
 	return class_names
 
 
-def ap_per_class(tp, conf, pred_cls, target_cls):
-	""" Compute the average precision, given the recall and precision curves.
-	Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
-	# Arguments
-		tp:	True positives (list).
-		conf:  Objectness value from 0-1 (list).
-		pred_cls: Predicted object classes (list).
-		target_cls: True object classes (list).
-	# Returns
-		The average precision as computed in py-faster-rcnn.
-	"""
+# def ap_per_class(tp, conf, pred_cls, target_cls):
+# 	""" Compute the average precision, given the recall and precision curves.
+# 	Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
+# 	# Arguments
+# 		tp:	True positives (list).
+# 		conf:  Objectness value from 0-1 (list).
+# 		pred_cls: Predicted object classes (list).
+# 		target_cls: True object classes (list).
+# 	# Returns
+# 		The average precision as computed in py-faster-rcnn.
+# 	"""
 
-	# Sort by objectness
-	i = np.argsort(-conf)
-	tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+# 	# Sort by objectness
+# 	i = np.argsort(-conf)
+# 	tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
 
-	# Find unique classes
-	unique_classes = np.unique(target_cls)
+# 	# Find unique classes
+# 	unique_classes = np.unique(target_cls)
 
-	# Create Precision-Recall curve and compute AP for each class
-	ap, p, r = [], [], []
-	for c in unique_classes:
-		i = pred_cls == c
-		n_gt = (target_cls == c).sum()  # Number of ground truth objects
-		n_p = i.sum()  # Number of predicted objects
+# 	# Create Precision-Recall curve and compute AP for each class
+# 	ap, p, r = [], [], []
+# 	for c in unique_classes:
+# 		i = pred_cls == c
+# 		n_gt = (target_cls == c).sum()  # Number of ground truth objects
+# 		n_p = i.sum()  # Number of predicted objects
 
-		# print(n_p, n_gt)
+# 		# print(n_p, n_gt)
 
-		if n_p == 0 and n_gt == 0:
-			continue
-		elif n_p == 0 or n_gt == 0:
-			ap.append(0)
-			r.append(0)
-			p.append(0)
-		else:
-			# Accumulate FPs and TPs
-			fpc = (1 - tp[i]).cumsum()
-			tpc = (tp[i]).cumsum()
+# 		if n_p == 0 and n_gt == 0:
+# 			continue
+# 		elif n_p == 0 or n_gt == 0:
+# 			ap.append(0)
+# 			r.append(0)
+# 			p.append(0)
+# 		else:
+# 			# Accumulate FPs and TPs
+# 			fpc = (1 - tp[i]).cumsum()
+# 			tpc = (tp[i]).cumsum()
 
-			# Recall
-			recall_curve = tpc / (n_gt + 1e-16)
-			r.append(recall_curve[-1])
+# 			# Recall
+# 			recall_curve = tpc / (n_gt + 1e-16)
+# 			r.append(recall_curve[-1])
 
-			# Precision
-			precision_curve = tpc / (tpc + fpc)
-			p.append(precision_curve[-1])
+# 			# Precision
+# 			precision_curve = tpc / (tpc + fpc)
+# 			p.append(precision_curve[-1])
 
-			# AP from recall-precision curve
-			ap.append(compute_ap(recall_curve, precision_curve))
+# 			# AP from recall-precision curve
+# 			ap.append(compute_ap(recall_curve, precision_curve))
 
-	# Compute F1 score (harmonic mean of precision and recall)
-	p, r, ap = np.array(p), np.array(r), np.array(ap)
-	f1 = 2 * p * r / (p + r + 1e-16)
+# 	# Compute F1 score (harmonic mean of precision and recall)
+# 	p, r, ap = np.array(p), np.array(r), np.array(ap)
+# 	f1 = 2 * p * r / (p + r + 1e-16)
 
-	return p, r, ap, f1, unique_classes.astype("int32")
+# 	return p, r, ap, f1, unique_classes.astype("int32")
+
+def ap_per_class(tp, conf, pred_cls, target_cls, iou_thresholds=[0.5], size_bins=[0, 32, 96, 512]):
+    """ 
+    Compute the average precision, given the recall and precision curves for different IoU thresholds and object sizes.
+
+    # Arguments:
+        tp:        True positives (list).
+        conf:      Objectness value from 0-1 (list).
+        pred_cls:  Predicted object classes (list).
+        target_cls: True object classes (list).
+        iou_thresholds: List of IoU thresholds for mAP calculation (default [0.5]).
+        size_bins: List of size bins for object sizes (default [0, 32, 96, 512]).
+
+    # Returns:
+        p: Precision for each class.
+        r: Recall for each class.
+        ap: Average Precision for each class.
+        f1: F1 score for each class.
+        unique_classes: Unique class indices.
+    """
+    # Sort by objectness
+    i = np.argsort(-conf)
+    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+
+    # Find unique classes
+    unique_classes = np.unique(target_cls)
+
+    # Initialize lists for precision, recall, and AP
+    ap, p, r = [], [], []
+    for c in unique_classes:
+        # Class-wise filtering
+        i = pred_cls == c
+        n_gt = (target_cls == c).sum()  # Number of ground truth objects
+        n_p = i.sum()  # Number of predicted objects
+
+        # Skip class if no predictions or ground truth
+        if n_p == 0 and n_gt == 0:
+            continue
+        elif n_p == 0 or n_gt == 0:
+            ap.append(0)
+            r.append(0)
+            p.append(0)
+        else:
+            # Accumulate FPs and TPs
+            fpc = (1 - tp[i]).cumsum()
+            tpc = (tp[i]).cumsum()
+
+            # Recall
+            recall_curve = tpc / (n_gt + 1e-16)
+            r.append(recall_curve[-1])
+
+            # Precision
+            precision_curve = tpc / (tpc + fpc)
+            p.append(precision_curve[-1])
+
+            # AP from recall-precision curve (can be adjusted to IoU thresholds)
+            ap.append(compute_ap(recall_curve, precision_curve))
+
+    # Compute F1 score (harmonic mean of precision and recall)
+    p, r, ap = np.array(p), np.array(r), np.array(ap)
+    f1 = 2 * p * r / (p + r + 1e-16)
+
+    # For IoU thresholds and size-based mAP
+    ap_per_iou = {}
+    for iou_thresh in iou_thresholds:
+        ap_per_iou[f"mAP@{iou_thresh}"] = compute_iou_based_ap(tp, conf, pred_cls, target_cls, iou_thresh)
+
+    ap_per_size = {}
+    for size_bin in size_bins:
+        ap_per_size[f"mAP_size{size_bin}"] = compute_size_based_ap(tp, conf, pred_cls, target_cls, size_bin)
+
+    return p, r, ap, f1, unique_classes.astype("int32"), ap_per_iou, ap_per_size
+
+def compute_iou_based_ap(tp, conf, pred_cls, target_cls, iou_threshold=0.5):
+    """ Compute mAP for a given IoU threshold. """
+    # Implement the IoU thresholding logic to compute mAP at specific IoU threshold
+    # This can be based on how well the predicted boxes overlap with the ground truth boxes.
+    # The formula typically involves calculating IoU for each predicted box with ground truth.
+    # Return mAP at the given IoU threshold.
+    pass
+
+def compute_size_based_ap(tp, conf, pred_cls, target_cls, size_bin):
+    """ Compute mAP for a given object size bin. """
+    # Implement logic to calculate mAP for different object size bins (small, medium, large)
+    # based on the bounding box size or area (width * height) of the objects.
+    # This involves categorizing objects by size and then calculating mAP for each size group.
+    pass
+
 
 
 def compute_ap(recall, precision):
