@@ -87,8 +87,8 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     }
 
     # COCOeval Output for AP and AR
-    for metric, value in coco_eval.stats[:6]:
-        print(f"{metric}: {value:.3f}")
+    for i, value in enumerate(coco_eval.stats[:6]):
+        print(f"Metric {i}: {value:.3f}")
 
     metric_table_data = [
         ['Metrics', 'Value'],
