@@ -48,11 +48,13 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
         sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
 
     true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
-    precision, recall, AP, f1, ap_class, ap_per_iou, ap_per_size = ap_per_class(true_positives, pred_scores, pred_labels, labels)
+    precision, recall, AP, f1, ap_class, ap_per_iou, ap_per_size = ap_per_class(
+    true_positives, pred_scores, pred_labels, labels,
+    iou_thresholds=[0.5, 0.75])
 
     # Tambahkan print untuk mAP@0.5 dan mAP@0.75
-    print("mAP@0.5 :", ap_per_iou["mAP@0.5"])
-    print("mAP@0.75:", ap_per_iou["mAP@0.75"])
+    print("mAP@0.5 :", ap_per_iou.get("mAP@0.5", "N/A"))
+    print("mAP@0.75:", ap_per_iou.get("mAP@0.75", "N/A"))
 
     metric_table_data = [
         ['Metrics', 'Value'], ['precision', precision.mean()], ['recall', recall.mean()],
