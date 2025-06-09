@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn as nn
-from torchprofile import get_model_complexity_info
+from ptflops import get_model_complexity_info
 
 from dataloader.DUODataset import DUODataset, collate_fn
 from torch.utils.data import DataLoader
@@ -17,14 +17,17 @@ from test import test
 
 def compute_flops_and_params(model, input_res=(3, 224, 224)):
     model.eval()
-    with torch.no_grad():
+    with torch.cuda.device(0 if torch.cuda.is_available() else -1):
         macs, params = get_model_complexity_info(
-            model, input_res, as_strings=True,
-            print_per_layer_stat=False, verbose=False
+            model, input_res,
+            as_strings=True,
+            print_per_layer_stat=False,
+            verbose=False
         )
     print(f"Model FLOPs: {macs}")
     print(f"Model Params: {params}")
     return macs, params
+
 
 if __name__ == "__main__":
     opt = Opt().parse()
