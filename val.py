@@ -2,114 +2,92 @@ import os
 import numpy as np
 import torch
 from terminaltables import AsciiTable
+
 from tqdm import tqdm
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
+
 from utils.stats import (
-    non_max_suppression, xywh2xyxy,
-    get_batch_statistics, ap_per_class, load_classe_names
-)
+	non_max_suppression, xywh2xyxy,
+	get_batch_statistics, ap_per_class, load_classe_names)
+
 
 @torch.no_grad()
 def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mAP=0):
-    model.eval()
-    device = torch.device('cuda' if torch.cuda.is_available() and opt.gpu else 'cpu')
-    ngpu = torch.cuda.device_count() if device.type == 'cuda' else 1
+	labels = []
+	sample_matrics = []
+	model.eval()
+	total_loss = []
 
-    labels = []
-    sample_metrics = []
-    total_loss = []
+	for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
 
-    # List of IoU thresholds and size bins
-    iou_thresholds = [0.5, 0.75]  # mAP at IoU 0.5 and IoU 0.75
-    size_bins = [0, 32, 96, 512]  # Small, Medium, Large objects
+		rep_targets = []
+		for ri in range(torch.cuda.device_count()):
+			rep_targets.append(targets.unsqueeze(dim=0))
+		rep_targets = torch.cat(rep_targets, dim=0)
 
-    for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
-        images = images.to(device)
-        targets = targets.to(device)
-        indexes = indexes.to(device)
+		if opt.gpu:
+			images = images.cuda()
+			indexes = indexes.cuda()
+			rep_targets = rep_targets.cuda()
+			targets = targets.cuda()
 
-        rep_targets = []
-        for _ in range(ngpu):
-            rep_targets.append(targets.unsqueeze(dim=0))
-        rep_targets = torch.cat(rep_targets, dim=0).to(device)
+		loss, detections = model.forward(images, rep_targets, indexes)
 
-        loss, detections = model(images, rep_targets, indexes)
+		if torch.cuda.device_count() > 1:
+			loss = loss.sum()
+		total_loss.append(loss.item())
 
-        if ngpu > 1:
-            loss = loss.sum()
-        total_loss.append(loss.item())
+		detections = non_max_suppression(detections, opt.conf_thresh, opt.nms_thresh)
+		# detections = to_cpu(detections)
+		if len(targets) == 0:
+			continue
 
-        detections = non_max_suppression(detections, opt.conf_thresh, opt.nms_thresh)
+		labels += targets[:, 1].tolist()
+		targets[:, 2:] = xywh2xyxy(targets[:, 2:])
+		targets[:, 2:] *= opt.image_size
 
-        if len(targets) == 0:
-            continue
+		sample_matrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
 
-        labels += targets[:, 1].tolist()
-        targets[:, 2:] = xywh2xyxy(targets[:, 2:])
-        targets[:, 2:] *= opt.image_size
+	true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
+	precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels)
 
-        sample_metrics += get_batch_statistics(detections, targets, indexes, iou_threshold=0.5)
+	# logging
+	metric_table_data = [
+		['Metrics', 'Value'], ['precision', precision.mean()], ['recall', recall.mean()],
+		['f1', f1.mean()], ['mAP', AP.mean()], ['loss', np.array(total_loss).mean()]]
 
-    true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
-    precision, recall, AP, f1, ap_class, ap_per_iou, ap_per_size = ap_per_class(true_positives, pred_scores, pred_labels, labels, iou_thresholds=iou_thresholds, size_bins=size_bins)
+	metric_table = AsciiTable(
+		metric_table_data,
+		title='[Epoch {:d}/{:d}'.format(epoch, opt.num_epochs))
 
-    # Log the metrics
-    metric_table_data = [
-        ['Metrics', 'Value'], 
-        ['precision', precision.mean()], 
-        ['recall', recall.mean()],
-        ['f1', f1.mean()], 
-        ['mAP', AP.mean()], 
-        ['loss', np.array(total_loss).mean()]
-    ]
+	class_names = load_classe_names(opt.classname_path)
+	for i, c in enumerate(ap_class):
+		metric_table_data += [['AP-{}'.format(class_names[c]), AP[i]]]
+	metric_table.table_data = metric_table_data
+	val_logger.print_and_write('{}\n'.format(metric_table.table))
 
-    metric_table = AsciiTable(
-        metric_table_data,
-        title='[Epoch {:d}/{:d}]'.format(epoch, opt.num_epochs)
-    )
+	if best_mAP < AP.mean():
+		save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
+		if torch.cuda.device_count() > 1:
+			states = {
+				'epoch': epoch + 1,
+				'model': opt.model,
+				'state_dict': model.module.state_dict(),
+				'optimizer': optimizer.state_dict(),
+				'scheduler': scheduler.state_dict(),
+				'best_mAP': best_mAP,
+			}
+		else:
+			states = {
+				'epoch': epoch + 1,
+				'model': opt.model,
+				'state_dict': model.state_dict(),
+				'optimizer': optimizer.state_dict(),
+				'scheduler': scheduler.state_dict(),
+				'best_mAP': best_mAP,
+			}
+		torch.save(states, save_file_path)
+		best_mAP = AP.mean()
 
-    # Log the AP values for each IoU threshold (mAP50, mAP75)
-    for key, value in ap_per_iou.items():
-        # Only log if the value is not None
-        if value is not None:
-            metric_table_data.append([key, value])
+	print("current best mAP:" + str(best_mAP))
 
-    # Log the AP values for different object sizes (mAPsmall, mAPmedium, mAPlarge)
-    for key, value in ap_per_size.items():
-        # Only log if the value is not None
-        if value is not None:
-            metric_table_data.append([key, value])
-
-    metric_table.table_data = metric_table_data
-    val_logger.print_and_write('{}\n'.format(metric_table.table))
-
-    # **Menyimpan checkpoint terbaik berdasarkan mAP keseluruhan**
-    # Menghitung mAP keseluruhan dari semua metrik mAP
-    # Menyaring nilai-nilai None sebelum menghitung rata-rata mAP keseluruhan
-    valid_iou_maps = [value for value in ap_per_iou.values() if value is not None]
-    valid_size_maps = [value for value in ap_per_size.values() if value is not None]
-
-    if valid_iou_maps or valid_size_maps:
-        overall_mAP = np.mean(valid_iou_maps + valid_size_maps)  # Gabungkan mAP dari IoU dan size
-    else:
-        overall_mAP = 0.0  # Set overall_mAP ke 0 jika tidak ada nilai yang valid
-
-    # Simpan checkpoint jika mAP keseluruhan lebih baik
-    if best_mAP < overall_mAP:
-        save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
-        states = {
-            'epoch': epoch + 1,
-            'model': opt.model,
-            'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-            'best_mAP': best_mAP,
-        }
-        torch.save(states, save_file_path)
-        best_mAP = overall_mAP
-
-    print("current best mAP:" + str(best_mAP))
-
-    return best_mAP
-
+	return best_mAP

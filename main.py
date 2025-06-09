@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn as nn
-from ptflops import get_model_complexity_info
+from torchprofile import get_model_complexity_info
 
 from dataloader.DUODataset import DUODataset, collate_fn
 from torch.utils.data import DataLoader

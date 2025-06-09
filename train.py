@@ -1,69 +1,86 @@
-import torch  # Make sure this line is included at the top
 import os
+import torch
 from terminaltables import AsciiTable
+
 from tqdm import tqdm
 
-# Ensure that the rest of the code follows after the import
+
 def train(model, optimizer, scheduler, dataloader, epoch, opt, logger, best_mAP=0):
-    model.train()
-    device = torch.device("cuda" if torch.cuda.is_available() and opt.gpu else "cpu")
-    ngpu = torch.cuda.device_count() if device.type == "cuda" else 1
+	model.train()
+	for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
+		optimizer.zero_grad()
+		# targets: [index, class_id, x, y, h, w] in yolo format
 
-    for i, (images, targets, indexes) in enumerate(tqdm(dataloader)):
-        optimizer.zero_grad()
+		rep_targets = []
+		for ri in range(torch.cuda.device_count()):
+			rep_targets.append(targets.unsqueeze(dim=0))
+		rep_targets = torch.cat(rep_targets, dim=0)
 
-        if targets is None or targets.numel() == 0:
-            continue
+		if opt.gpu:
+			images = images.cuda()
+			indexes = indexes.cuda()
+			rep_targets = rep_targets.cuda()
+			targets = targets.cuda()
 
-        if targets.dim() == 1:
-            targets = targets.unsqueeze(0)
+		loss, detections = model.forward(images, rep_targets, indexes)
+		# detections = to_cpu(detections)
+		if torch.cuda.device_count() > 1:
+			loss = loss.sum()
 
-        images = images.to(device)
-        targets = targets.to(device)
-        indexes = indexes.to(device)
+		loss.backward()
+		optimizer.step()
 
-        rep_targets = [targets.unsqueeze(0) for _ in range(ngpu)]
-        rep_targets = torch.cat(rep_targets, dim=0).to(device)
+		# logging
+		if torch.cuda.device_count() > 1:
+			metric_keys = model.module.yolo_layers[0].metrics.keys()
+			yolo_metrics = [model.module.yolo_layers[i].metrics for i in range(len(model.module.yolo_layers))]
+		else:
+			metric_keys = model.yolo_layers[0].metrics.keys()
+			yolo_metrics = [model.yolo_layers[i].metrics for i in range(len(model.yolo_layers))]
 
-        loss, detections = model(images, rep_targets, indexes)
-        if ngpu > 1:
-            loss = loss.sum()
+		layer_header = ['YOLO Layer {}'.format(i) for i in range(len(yolo_metrics))]
+		metric_table_data = [['Metrics', *layer_header]]
+		formats = {m: '%.6f' for m in metric_keys}
+		for metric in metric_keys:
+			row_metrics = [formats[metric] % ym.get(metric, 0) for ym in yolo_metrics]
+			metric_table_data += [[metric, *row_metrics]]
+		metric_table_data += [['total loss', '{:.6f}'.format(loss.item()), '', '']]
 
-        loss.backward()
-        optimizer.step()
+		# beautify log message
+		metric_table = AsciiTable(
+			metric_table_data,
+			title='[Epoch {:d}/{:d}, Batch {:d}/{:d}, Current best mAP {:4f}]'.format(epoch, opt.num_epochs, i,
+																					  len(dataloader), best_mAP))
+		metric_table.inner_footing_row_border = True
+		logger.print_and_write('{}\n'.format(metric_table.table))
 
-        if ngpu > 1:
-            yolo_layers = model.module.yolo_layers
-        else:
-            yolo_layers = model.yolo_layers
+	scheduler.step()
 
-        metric_keys = yolo_layers[0].metrics.keys()
-        metric_table_data = [['Metrics'] + [f'YOLO Layer {i}' for i in range(len(yolo_layers))]]
-        for key in metric_keys:
-            row = [key] + [f"{yl.metrics.get(key, 0):.6f}" for yl in yolo_layers]
-            metric_table_data.append(row)
-        metric_table_data.append(['Total loss', f'{loss.item():.6f}'] + [''] * (len(yolo_layers) - 1))
+	# print("current best mAP:" + str(best_mAP))
 
-        metric_table = AsciiTable(
-            metric_table_data,
-            title=f'[Epoch {epoch}/{opt.num_epochs}, Batch {i}/{len(dataloader)}, Current best mAP {best_mAP:.4f}]'
-        )
-        metric_table.inner_footing_row_border = True
-        logger.print_and_write(f'{metric_table.table}\n')
+	# save checkpoints
+	if torch.cuda.device_count() > 1:
+		states = {
+			'epoch': epoch + 1,
+			'model': opt.model,
+			'state_dict': model.module.state_dict(),
+			'optimizer': optimizer.state_dict(),
+			'scheduler': scheduler.state_dict(),
+			'best_mAP': best_mAP,
+		}
+	else:
+		states = {
+			'epoch': epoch + 1,
+			'model': opt.model,
+			'state_dict': model.state_dict(),
+			'optimizer': optimizer.state_dict(),
+			'scheduler': scheduler.state_dict(),
+			'best_mAP': best_mAP,
+		}
 
-    scheduler.step()
+	save_file_path = os.path.join(opt.checkpoint_path, 'last.pth'.format(epoch))
+	torch.save(states, save_file_path)
 
-    state = {
-        'epoch': epoch + 1,
-        'model': opt.model,
-        'state_dict': model.module.state_dict() if ngpu > 1 else model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'scheduler': scheduler.state_dict(),
-        'best_mAP': best_mAP,
-    }
-
-    # Save checkpoint as .pt file
-    torch.save(state, os.path.join(opt.checkpoint_path, 'last.pt'))
-
-    if epoch % opt.checkpoint_interval == 0:
-        torch.save(state, os.path.join(opt.checkpoint_path, f'epoch_{epoch}.pt'))  # Save every epoch as .pt
+	if epoch % opt.checkpoint_interval == 0:
+		save_file_path = os.path.join(opt.checkpoint_path, 'epoch_{}.pth'.format(epoch))
+		torch.save(states, save_file_path)
