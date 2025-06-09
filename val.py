@@ -49,27 +49,34 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
 
     true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_matrics))]
     precision, recall, AP, f1, ap_class, ap_per_iou, ap_per_size = ap_per_class(
-    true_positives, pred_scores, pred_labels, labels,
-    iou_thresholds=[0.5, 0.75])
+    true_positives, pred_scores, pred_labels, labels, iou_thresholds=np.arange(0.5, 1.0, 0.05)
+)
 
-    # Tambahkan print untuk mAP@0.5 dan mAP@0.75
-    print("mAP@0.5 :", ap_per_iou.get("mAP@0.5", "N/A"))
-    print("mAP@0.75:", ap_per_iou.get("mAP@0.75", "N/A"))
-
+    # logging
     metric_table_data = [
-        ['Metrics', 'Value'], ['precision', precision.mean()], ['recall', recall.mean()],
-        ['f1', f1.mean()], ['mAP', AP.mean()], ['loss', np.array(total_loss).mean()]
-    ]
+        ['Metrics', 'Value'],
+        ['precision', precision.mean()],
+        ['recall', recall.mean()],
+        ['f1', f1.mean()],
+        ['mAP@[0.5:0.95]', np.mean(list(ap_per_iou.values()))],  # COCO-style
+        ['mAP@0.5', ap_per_iou.get('mAP@0.5', 0)],
+        ['mAP@0.75', ap_per_iou.get('mAP@0.75', 0)],
+        ['loss', np.array(total_loss).mean()]]
+    
+    for k, v in ap_per_iou.items():
+        metric_table_data.append([k, v])
 
     metric_table = AsciiTable(
         metric_table_data,
-        title='[Epoch {:d}/{:d}]'.format(epoch, opt.num_epochs))
+        title='[Epoch {:d}/{:d}'.format(epoch, opt.num_epochs)
+    )
 
     class_names = load_classe_names(opt.classname_path)
     for i, c in enumerate(ap_class):
         metric_table_data += [['AP-{}'.format(class_names[c]), AP[i]]]
     metric_table.table_data = metric_table_data
     val_logger.print_and_write('{}\n'.format(metric_table.table))
+
 
     if best_mAP < AP.mean():
         save_file_path = os.path.join(opt.checkpoint_path, 'best.pth')
