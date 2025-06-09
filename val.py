@@ -52,19 +52,19 @@ def val(model, optimizer, scheduler, dataloader, epoch, opt, val_logger, best_mA
     true_positives, pred_scores, pred_labels, labels, iou_thresholds=np.arange(0.5, 1.0, 0.05)
 )
 
-    # logging
     metric_table_data = [
         ['Metrics', 'Value'],
         ['precision', precision.mean()],
         ['recall', recall.mean()],
         ['f1', f1.mean()],
-        ['mAP@[0.5:0.95]', np.mean(list(ap_per_iou.values()))],  # COCO-style
-        ['mAP@0.5', ap_per_iou.get('mAP@0.5', 0)],
-        ['mAP@0.75', ap_per_iou.get('mAP@0.75', 0)],
-        ['loss', np.array(total_loss).mean()]]
-    
-    for k, v in ap_per_iou.items():
-        metric_table_data.append([k, v])
+        ['mAP@[0.5:0.95]', AP.mean()],
+        ['loss', np.array(total_loss).mean()],
+    ]
+
+    # Tambahkan hanya mAP@0.5 dan mAP@0.75
+    for k in ["mAP@0.5", "mAP@0.75"]:
+        if k in ap_per_iou:
+            metric_table_data.append([k, ap_per_iou[k]])
 
     metric_table = AsciiTable(
         metric_table_data,
