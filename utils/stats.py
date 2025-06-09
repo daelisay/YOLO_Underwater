@@ -158,12 +158,51 @@ def ap_per_class(tp, conf, pred_cls, target_cls, iou_thresholds=[0.5], size_bins
 
 
 def compute_iou_based_ap(tp, conf, pred_cls, target_cls, iou_threshold=0.5):
-    """ Compute mAP for a given IoU threshold. """
-    # Implement the IoU thresholding logic to compute mAP at specific IoU threshold
-    # This can be based on how well the predicted boxes overlap with the ground truth boxes.
-    # The formula typically involves calculating IoU for each predicted box with ground truth.
-    # Return mAP at the given IoU threshold.
-    pass
+    """
+    Compute Average Precision (AP) for a specific IoU threshold.
+    This function assumes tp, conf, and class predictions are already sorted.
+    """
+
+    # Jika tidak ada prediksi, langsung return 0
+    if len(tp) == 0:
+        return 0.0
+
+    # Urutkan berdasarkan confidence
+    indices = np.argsort(-conf)
+    tp = tp[indices]
+    conf = conf[indices]
+    pred_cls = pred_cls[indices]
+
+    # Hitung jumlah GT per kelas
+    unique_classes = np.unique(np.concatenate((pred_cls, target_cls)))
+    ap_list = []
+
+    for c in unique_classes:
+        # Filter berdasarkan kelas
+        cls_pred = pred_cls == c
+        cls_target = target_cls == c
+
+        n_gt = cls_target.sum()  # jumlah GT
+        n_p = cls_pred.sum()     # jumlah prediksi
+
+        if n_gt == 0 or n_p == 0:
+            ap_list.append(0.0)
+            continue
+
+        # TP dan FP kumulatif
+        fpc = (1 - tp[cls_pred]).cumsum()
+        tpc = (tp[cls_pred]).cumsum()
+
+        # Recall & Precision
+        recall = tpc / (n_gt + 1e-16)
+        precision = tpc / (tpc + fpc + 1e-16)
+
+        # Average Precision: luas area under curve dari PR
+        ap = compute_ap(recall, precision)
+        ap_list.append(ap)
+
+    return np.mean(ap_list)
+
 
 def compute_size_based_ap(tp, conf, pred_cls, target_cls, size_bin):
     """ Compute mAP for a given object size bin. """
